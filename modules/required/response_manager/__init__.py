@@ -254,28 +254,29 @@ async def get_bot_list(app: Ariadne, group: Group, source: Source):
         )
     ]
     for bot_account in config.bot_accounts:
-        if account_controller.check_account_available(bot_account):
+        bot_account_id = bot_account["account"]
+        if account_controller.check_account_available(bot_account_id):
             try:
                 bot_list_column.append(
                     ColumnUserInfo(
-                        name=f"{(await Ariadne.current(bot_account).get_bot_profile()).nickname}({bot_account})",
-                        description=f"已加入{len(await Ariadne.current(bot_account).get_group_list())}个群",
-                        avatar=await get_user_avatar_url(bot_account),
+                        name=f"{(await Ariadne.current(bot_account_id).get_bot_profile()).nickname}({bot_account_id})",
+                        description=f"已加入{len(await Ariadne.current(bot_account_id).get_group_list())}个群",
+                        avatar=await get_user_avatar_url(bot_account_id),
                     )
                 )
             except Exception as e:
                 logger.error(f"获取BOT信息失败: {e}")
                 bot_list_column.append(
                     ColumnUserInfo(
-                        name=f"{bot_account}[未连接]",
-                        avatar=await get_user_avatar_url(bot_account),
+                        name=f"{bot_account_id}[未连接]",
+                        avatar=await get_user_avatar_url(bot_account_id),
                     )
                 )
         else:
             bot_list_column.append(
                 ColumnUserInfo(
-                    name=f"{bot_account}[未连接]",
-                    avatar=await get_user_avatar_url(bot_account),
+                    name=f"{bot_account_id}[未连接]",
+                    avatar=await get_user_avatar_url(bot_account_id),
                 )
             )
     return await app.send_message(
