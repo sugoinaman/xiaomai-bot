@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from creart import create, add_creator, exists_module
 from creart.creator import AbstractCreator, CreateTargetInfo
 from graia.ariadne import Ariadne
+from graia.ariadne.connection import U_Info
 from graia.ariadne.connection.config import (
     HttpClientConfig,
     WebsocketClientConfig,
@@ -90,14 +91,7 @@ class Umaru:
         self.base_path = base_path if isinstance(base_path, Path) else Path(base_path)
         self.apps = [
             Ariadne(
-                config(
-                    bot_account["account"]
-                    if isinstance(bot_account, dict)
-                    else int(bot_account),
-                    str(g_config.verify_key),
-                    HttpClientConfig(host=g_config.mirai_host),
-                    WebsocketClientConfig(host=g_config.mirai_host),
-                ),
+                self._create_bot_config(bot_account, g_config),
                 log_config=LogConfig(lambda x: None if type(x) in non_log else "INFO"),
             )
             for bot_account in self.config.bot_accounts
@@ -138,6 +132,30 @@ class Umaru:
         self.config_check()
         self.initialized_app_list: list[int] = []
         self.initialized_group_list: list[int] = []
+
+    @staticmethod
+    def _create_bot_config(
+        bot_account: dict[str, int | str] | int, g_config: GlobalConfig
+    ) -> list[U_Info]:
+        """创建单个机器人的配置
+
+        Args:
+            bot_account: 机器人账号配置，可以是字典或整数
+            g_config: 全局配置对象
+
+        Returns:
+            List[U_Info]: 机器人连接配置列表
+        """
+        is_dict = isinstance(bot_account, dict)
+        account = bot_account.get("account") if is_dict else int(bot_account)
+        mirai_host = bot_account.get("mirai_host") if is_dict else g_config.mirai_host
+
+        return config(
+            account,
+            str(g_config.verify_key),
+            HttpClientConfig(host=mirai_host),
+            WebsocketClientConfig(host=mirai_host),
+        )
 
     async def initialize(self):
         if self.initialized:
