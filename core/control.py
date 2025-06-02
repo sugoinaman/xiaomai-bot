@@ -1,4 +1,6 @@
 import contextlib
+import hashlib
+import struct
 
 import sqlalchemy.exc
 from creart import create
@@ -357,6 +359,46 @@ class Function:
 class Distribute:
     initialization_completed = False
 
+    @staticmethod
+    def generate_stable_id(
+        group_id: int, sender_id: int, message: str, timestamp: float
+    ) -> int:
+        """
+        生成稳定且随机分布的正整数 ID。
+
+        该函数对传入的字段（群组 ID、发送者 ID、消息内容、时间戳）进行哈希，
+        并返回一个范围在 0～2^31-1 之间的非负整数，保证跨进程、跨平台的一致性。
+
+        Args:
+            group_id (int): 群组 ID
+            sender_id (int): 发送者 ID
+            message (str): 消息内容
+            timestamp (float): 时间戳（单位为秒，可为浮点数）。
+                                函数内部会将其转换为毫秒精度的整数。
+
+        Returns:
+            int: 生成的稳定正整数 ID，范围在 0～2^31-1 之间
+        """
+        # 1. 将浮点时间戳转换为毫秒级整数，避免浮点格式化差异
+        ts_ms = int(timestamp * 1000)
+
+        # 2. 按照固定字节顺序（大端）序列化各字段
+        buf = (
+            struct.pack(">Q", ts_ms)
+            + struct.pack(">Q", group_id)
+            + struct.pack(">Q", sender_id)
+            + message.encode("utf-8")
+        )
+
+        # 3. 使用 SHA-256 计算哈希值，得到一个 256 位的二进制摘要
+        digest = hashlib.sha256(buf).digest()
+
+        # 4. 将二进制摘要转换为一个大整数（大端），再截取低 31 位
+        full_hash_int = int.from_bytes(digest, "big")
+        result = full_hash_int & 0x7FFFFFFF
+
+        return result
+
     @classmethod
     def require(cls):
         """
@@ -377,13 +419,22 @@ class Distribute:
                 raise ExecutionStop
             if isinstance(event, FriendMessage):
                 return Depend(wrapper)
-            if event.sender.id in global_config.bot_accounts:
+            # 防止onebot与mirai协议转换时或协议源本身产生负数id导致分发失败
+            source_id = cls.generate_stable_id(
+                group.id,
+                event.sender.id,
+                event.message_chain.display,
+                source.time.timestamp(),
+            )
+            if event.sender.id in [
+                int(account["account"]) for account in global_config.bot_accounts
+            ]:
                 raise ExecutionStop
             group_id = group.id
             account_controller = response_model.get_acc_controller()
             bot_account = app.account
             if len(Ariadne.service.connections.keys()) == 1:
-                return
+                return Depend(wrapper)
             if bot_account not in account_controller.initialized_bot_list:
                 await account_controller.init_account(bot_account)
             if not account_controller.check_initialization(group_id, bot_account):
@@ -391,12 +442,12 @@ class Distribute:
                     group_id, await app.get_member_list(group_id), bot_account
                 )
                 raise ExecutionStop
-            res_acc = await account_controller.get_response_account(group_id, source.id)
+            res_acc = await account_controller.get_response_account(group_id, source_id)
             if not Ariadne.current(res_acc).connection.status.available:
                 account_controller.account_dict.pop(group_id)
                 raise ExecutionStop
             if bot_account != await account_controller.get_response_account(
-                group_id, source.id
+                group_id, source_id
             ):
                 raise ExecutionStop
             return Depend(wrapper)
