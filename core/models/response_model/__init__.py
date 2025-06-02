@@ -180,7 +180,9 @@ class AccountController:
             return
         for bot_account in config.bot_accounts:
             await self.init_account(
-                bot_account["account"] if isinstance(bot_account, dict) else bot_account
+                bot_account["account"]
+                if isinstance(bot_account, dict)
+                else int(bot_account)
             )
         self.all_initialized = True
 
