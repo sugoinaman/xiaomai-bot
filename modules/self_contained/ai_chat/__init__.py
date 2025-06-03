@@ -1,3 +1,4 @@
+import asyncio
 import mimetypes
 import re
 import ssl
@@ -192,65 +193,133 @@ async def process_image(image: Image) -> FileContent | None:
     """处理图像元素，转换为FileContent对象"""
     try:
         image_data = None
-        mime_type = "image/jpeg"  # 默认MIME类型
+        mime_type = "image/jpeg"  # 默认MIME类型，支持所有图片格式
 
-        # 优先尝试使用临时直链获取图片，因为这通常是本地获取，更稳定
+        # 创建更强的SSL配置，完全禁用SSL验证
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        # 禁用所有SSL/TLS安全检查
+        ssl_context.set_ciphers("ALL:@SECLEVEL=0")
+
+        # 创建连接器，配置SSL和超时
+        connector = aiohttp.TCPConnector(
+            ssl=ssl_context,
+            limit=10,
+            limit_per_host=5,
+            ttl_dns_cache=300,
+            use_dns_cache=True,
+        )
+
+        # 模拟浏览器请求头，避免被服务器拒绝
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Connection": "keep-alive",
+            "Sec-Fetch-Dest": "image",
+            "Sec-Fetch-Mode": "no-cors",
+            "Sec-Fetch-Site": "cross-site",
+        }
+
+        # 尝试多种方法获取图片数据
+        methods = []
+
+        # 方法1: 直接通过URL下载（优先，因为get_bytes也会有SSL问题）
+        if hasattr(image, "url") and image.url:
+            methods.append(("url_download", image.url))
+
+        # 方法2: 尝试get_bytes（作为备用）
         if hasattr(image, "get_bytes") and callable(image.get_bytes):
+            methods.append(("get_bytes", None))
+
+        for method_name, url in methods:
             try:
-                image_data = await image.get_bytes()
-                logger.debug("通过 get_bytes 成功获取图片数据")
+                if method_name == "url_download":
+                    # 使用多次重试的URL下载
+                    for attempt in range(3):  # 最多重试3次
+                        try:
+                            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+                            async with aiohttp.ClientSession(
+                                headers=headers, connector=connector, timeout=timeout
+                            ) as session:
+                                async with session.get(url) as response:
+                                    if response.status == 200:
+                                        image_data = await response.read()
+                                        # 从响应头获取真实的MIME类型，支持所有图片格式
+                                        mime_type = response.headers.get(
+                                            "Content-Type", "image/jpeg"
+                                        )
+
+                                        # 如果响应头没有MIME类型，尝试从URL推断
+                                        if mime_type == "image/jpeg" and url:
+                                            if url.lower().endswith((".png", ".PNG")):
+                                                mime_type = "image/png"
+                                            elif url.lower().endswith((".gif", ".GIF")):
+                                                mime_type = "image/gif"
+                                            elif url.lower().endswith(
+                                                (".webp", ".WEBP")
+                                            ):
+                                                mime_type = "image/webp"
+                                            elif url.lower().endswith((".bmp", ".BMP")):
+                                                mime_type = "image/bmp"
+
+                                        logger.debug(
+                                            f"通过 URL 下载成功获取图片数据 (尝试 {attempt + 1}/3)，MIME: {mime_type}"
+                                        )
+                                        break
+                                    else:
+                                        logger.warning(
+                                            f"URL下载失败，状态码: {response.status} (尝试 {attempt + 1}/3)"
+                                        )
+                        except Exception as e:
+                            logger.warning(f"URL下载尝试 {attempt + 1}/3 失败: {e}")
+                            if attempt == 2:  # 最后一次尝试
+                                logger.error(f"URL下载所有尝试均失败: {e}")
+                            else:
+                                await asyncio.sleep(1)  # 重试前等待1秒
+
+                elif method_name == "get_bytes":
+                    # 尝试get_bytes方法
+                    image_data = await image.get_bytes()
+                    logger.debug("通过 get_bytes 成功获取图片数据")
+
+                # 如果成功获取到数据，跳出循环
+                if image_data:
+                    break
+
             except Exception as e:
-                logger.warning(f"通过 get_bytes 获取图片失败: {e}")
+                logger.warning(f"方法 {method_name} 获取图片失败: {e}")
+                continue
 
-        # 如果 get_bytes 失败或没有，尝试通过URL下载图片
-        if image_data is None and hasattr(image, "url") and image.url:
-            # 创建一个不验证SSL证书的上下文，以解决SSL握手问题
-            # 注意：这会降低安全性，仅在确定目标安全且无法通过正常方式连接时使用
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-
-            # 模拟浏览器请求头，避免被服务器拒绝
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.88 Safari/537.36",
-                "Accept": "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Connection": "keep-alive",
-            }
-
-            try:
-                async with aiohttp.ClientSession(headers=headers) as session:
-                    # 设置超时，避免长时间等待
-                    async with session.get(
-                        image.url, ssl=ssl_context, timeout=30
-                    ) as response:
-                        if response.status == 200:
-                            image_data = await response.read()
-                            mime_type = response.headers.get(
-                                "Content-Type", "image/jpeg"
-                            )
-                            logger.debug(
-                                f"通过 URL 成功获取图片数据，MIME: {mime_type}"
-                            )
-                        else:
-                            logger.warning(
-                                f"从 URL 获取图片失败，状态码: {response.status}, URL: {image.url}"
-                            )
-            except aiohttp.ClientError as ce:
-                logger.error(f"从 URL 获取图片时发生客户端错误: {ce}, URL: {image.url}")
-            except Exception as ex:
-                logger.error(f"从 URL 获取图片时发生未知错误: {ex}, URL: {image.url}")
+        # 确保连接器被正确关闭
+        await connector.close()
 
         if image_data:
+            # 根据MIME类型确定文件扩展名
+            file_extension = "jpg"  # 默认扩展名
+            if mime_type == "image/png":
+                file_extension = "png"
+            elif mime_type == "image/gif":
+                file_extension = "gif"
+            elif mime_type == "image/webp":
+                file_extension = "webp"
+            elif mime_type == "image/bmp":
+                file_extension = "bmp"
+            elif mime_type in ["image/jpeg", "image/jpg"]:
+                file_extension = "jpg"
+
             return FileContent(
                 file_type=FileType.IMAGE,
                 file_bytes=image_data,
                 mime_type=mime_type,
-                file_name="image.jpg",
+                file_name=f"image.{file_extension}",
             )
         else:
+            logger.error("所有方法均无法获取图片数据")
             raise ValueError("无法获取图片数据")
+
     except Exception as e:
         logger.error(f"处理图像时出错: {e}")
         return None
