@@ -315,7 +315,7 @@ class SystemStatus:
             "bot_cpu_percent": f"{self.bot_process_info.cpu_percent:.1f}",
             "bot_memory_percent": f"{self.bot_process_info.memory_percent:.1f}",
             "bot_memory_rss_mb": f"{self.bot_process_info.memory_rss_mb:.1f}",
-            "bot_memory_total_percent": f"{(self.bot_process_info.memory_rss_mb / self.memory_total_mb * 100):.2f}",
+            "bot_memory_total_percent": f"{(self.bot_process_info.memory_rss_mb / self.memory_total_mb * 100):.2f}" if self.memory_total_mb > 0 else "0.00",
             "bot_threads": self.bot_process_info.threads,
             "bot_open_files": self.bot_process_info.open_files,
         }
