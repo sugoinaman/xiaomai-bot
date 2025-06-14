@@ -75,7 +75,7 @@ xiaomai-bot/
 ## 测试与部署
 - **本地运行**: `uv run main.py`
 - **Docker**: `docker build -t xiaomai-bot .`
-- **配置**: 复制 `config_demo.yaml` 为 `config.yaml`
+- **配置**: 复制 config/config_demo.yaml 为 config/config.yaml
 
 ## 注意事项
 - 新功能优先考虑插件形式实现
