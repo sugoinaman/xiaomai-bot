@@ -9,6 +9,7 @@ from graia.ariadne.message.parser.twilight import RegexResult, Twilight, RegexMa
 from graia.ariadne.model import Group
 from graia.saya import Channel, Saya
 from graia.saya.builtins.broadcast import ListenerSchema
+from urllib.parse import urlparse
 
 from core.control import Permission, Function, Distribute
 from core.models import saya_model
@@ -55,8 +56,6 @@ async def github_card(
 
 
 async def get_github_reposity_information(url: str) -> str | None:
-    from urllib.parse import urlparse
-
     parsed_url = urlparse(url)
     if parsed_url.hostname != "github.com":
         return None
