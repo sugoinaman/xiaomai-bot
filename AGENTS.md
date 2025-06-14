@@ -26,7 +26,7 @@ xiaomai-bot/
 │   ├── self_contained/    # 内置插件 (AI聊天、战地一等)
 │   └── third_party/       # 第三方插件
 ├── utils/                 # 工具库
-├── config/               # 配置文件
+├── config/               # 配置文件目录
 └── main.py               # 启动入口
 ```
 
