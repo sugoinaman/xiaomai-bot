@@ -6,6 +6,7 @@ BF1性能优化缓存管理器
 import asyncio
 import time
 from typing import Any
+
 from loguru import logger
 
 
@@ -18,15 +19,25 @@ class PlayerStatCache:
     def __init__(self):
         self._cache: dict[int, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._cleanup_task = None
 
         # 缓存配置
         self.ttl = 300  # 5分钟缓存，战绩数据变化较慢
+        self.max_cache_size = 1000  # 最大缓存1000个玩家战绩
 
-        # 启动清理任务
-        asyncio.create_task(self._cleanup_expired_cache())
+    def _ensure_cleanup_task(self):
+        """确保清理任务已启动"""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            try:
+                self._cleanup_task = asyncio.create_task(self._cleanup_expired_cache())
+            except RuntimeError:
+                # 如果没有运行的事件循环，稍后再启动
+                pass
 
     async def get_player_stat(self, pid: int) -> dict | None:
         """获取玩家战绩缓存"""
+        self._ensure_cleanup_task()  # 确保清理任务已启动
+
         async with self._lock:
             if pid in self._cache:
                 item = self._cache[pid]
@@ -42,6 +53,15 @@ class PlayerStatCache:
     async def cache_player_stat(self, pid: int, data: dict) -> None:
         """缓存玩家战绩数据"""
         async with self._lock:
+            # 检查缓存大小限制
+            if len(self._cache) >= self.max_cache_size:
+                # 删除最旧的缓存项
+                oldest_pid = min(
+                    self._cache.keys(), key=lambda k: self._cache[k]["timestamp"]
+                )
+                del self._cache[oldest_pid]
+                logger.debug(f"缓存已满，删除最旧项: {oldest_pid}")
+
             self._cache[pid] = {"data": data, "timestamp": time.time()}
             logger.debug(f"玩家战绩已缓存: {pid}")
 
@@ -83,12 +103,20 @@ class PlatoonCache:
     def __init__(self):
         self._cache: dict[int, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._cleanup_task = None
 
         # 缓存配置
         self.ttl = 600  # 10分钟缓存，战队信息变化很慢
+        self.max_cache_size = 500  # 最大缓存500个战队信息
 
-        # 启动清理任务
-        asyncio.create_task(self._cleanup_expired_cache())
+    def _ensure_cleanup_task(self):
+        """确保清理任务已启动"""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            try:
+                self._cleanup_task = asyncio.create_task(self._cleanup_expired_cache())
+            except RuntimeError:
+                # 如果没有运行的事件循环，稍后再启动
+                pass
 
     async def get_platoon_info(self, pid: int) -> dict | None:
         """获取Platoon信息缓存"""

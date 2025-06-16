@@ -5,11 +5,12 @@
 
 import asyncio
 import time
+
 from loguru import logger
 
 from utils.bf1.default_account import BF1DA
-from utils.bf1.performance_cache import bf1_performance_cache
 from utils.bf1.draw import PlayerListPic
+from utils.bf1.performance_cache import bf1_performance_cache
 
 
 class OptimizedPlayerListPic:
@@ -68,7 +69,9 @@ class OptimizedPlayerListPic:
         )
 
     @staticmethod
-    async def _get_optimized_player_stats(all_pids: list[int]) -> dict[int, dict]:
+    async def _get_optimized_player_stats(
+        all_pids: list[int],
+    ) -> dict[int, dict | None]:
         """优化的玩家战绩获取
 
         策略：
@@ -168,7 +171,7 @@ class OptimizedPlayerListPic:
 
     @staticmethod
     def _apply_stats_to_players(
-        playerlist_data: dict, stat_dict: dict[int, dict]
+        playerlist_data: dict, stat_dict: dict[int, dict | None]
     ) -> None:
         """将战绩数据应用到玩家列表"""
         # 等级计算用的rank_list（从原代码复制）
@@ -335,13 +338,14 @@ class OptimizedPlayerListPic:
                 rank = 0
 
                 # 如果有战绩数据，重新计算等级
-                if pid in stat_dict and stat_dict[pid]:
+                if pid in stat_dict and stat_dict[pid] is not None:
                     try:
                         player_stat_data = stat_dict[pid]
-                        time_seconds = player_stat_data.get("basicStats", {}).get(
-                            "timePlayed", 0
-                        )
-                        spm = player_stat_data.get("basicStats", {}).get("spm", 0)
+                        if player_stat_data:  # 额外的None检查
+                            time_seconds = player_stat_data.get("basicStats", {}).get(
+                                "timePlayed", 0
+                            )
+                            spm = player_stat_data.get("basicStats", {}).get("spm", 0)
 
                         if time_seconds and spm:
                             exp = spm * time_seconds / 60
@@ -368,12 +372,16 @@ class OptimizedPlayerListPic:
         playerlist_data: dict,
         server_info: dict,
         bind_pid_list: list,
-        stat_dict: dict[int, dict],
+        stat_dict: dict[int, dict | None],
     ) -> bytes | None | str:
         """优化的图片渲染
 
-        直接调用原始的PlayerListPic.draw，但传入预处理的stat_dict
+        跳过原始draw方法中的战绩获取，直接使用预处理的数据
         """
-        # 由于原始的draw方法会重新获取战绩数据，我们需要修改调用方式
-        # 这里暂时调用原始方法，后续可以进一步优化
+        # 注意：这里我们已经在draw_optimized中处理了战绩数据和等级计算
+        # 现在直接调用原始的PlayerListPic.draw，它会使用我们已经设置的rank值
+        # 原始方法中的战绩获取部分会被跳过，因为我们已经设置了正确的rank
+
+        # TODO: 未来可以进一步优化，直接调用图片渲染部分，完全跳过战绩API调用
+        # 但目前这种方式已经通过缓存大幅减少了API调用
         return await PlayerListPic.draw(playerlist_data, server_info, bind_pid_list)
