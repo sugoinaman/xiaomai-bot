@@ -66,12 +66,13 @@ from utils.bf1.data_handle import VehicleData, WeaponData
 from utils.bf1.database import BF1DB
 from utils.bf1.default_account import BF1DA
 from utils.bf1.draw import (
-    PlayerListPic,
     PlayerStatPic,
     PlayerVehiclePic,
     PlayerWeaponPic,
 )
 from utils.bf1.map_team_info import MapData
+from utils.bf1.optimized_blaze_manager import optimized_blaze_manager
+from utils.bf1.optimized_player_list_pic import OptimizedPlayerListPic
 from utils.parse_messagechain import get_targets
 from utils.string import generate_random_str
 from utils.timeutils import DateTimeUtils
@@ -1940,8 +1941,9 @@ async def get_server_playerList_pic(
     #         "服务器信息为空" if playerlist_data is None else playerlist_data
     #     ), quote=source)
 
-    # 本地blaze接口:
-    playerlist_data = await BF1BlazeManager.get_player_list(
+    # 优化的blaze接口:
+
+    playerlist_data = await optimized_blaze_manager.get_optimized_player_list(
         game_ids=server_gameid, platoon=True
     )
     if playerlist_data is None:
@@ -1959,7 +1961,9 @@ async def get_server_playerList_pic(
         )
 
     bind_pid_list = await BF1GROUP.get_group_bindList(app, group)
-    pl_pic = await PlayerListPic.draw(
+
+    # 使用优化的图片生成器
+    pl_pic = await OptimizedPlayerListPic.draw_optimized(
         playerlist_data=playerlist_data,
         server_info=server_info,
         bind_pid_list=bind_pid_list,
