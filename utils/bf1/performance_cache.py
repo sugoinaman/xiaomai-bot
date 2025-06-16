@@ -5,9 +5,23 @@ BF1性能优化缓存管理器
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 from loguru import logger
+
+
+class PlayerStatCacheEntry(TypedDict):
+    """玩家战绩缓存条目类型定义"""
+
+    data: dict[str, Any]
+    timestamp: float
+
+
+class PlatoonCacheEntry(TypedDict):
+    """Platoon缓存条目类型定义"""
+
+    data: dict[str, Any]
+    timestamp: float
 
 
 class PlayerStatCache:
@@ -17,7 +31,7 @@ class PlayerStatCache:
     """
 
     def __init__(self):
-        self._cache: dict[int, dict[str, Any]] = {}
+        self._cache: dict[int, PlayerStatCacheEntry] = {}
         self._lock = asyncio.Lock()
         self._cleanup_task = None
 
@@ -109,7 +123,7 @@ class PlatoonCache:
     """
 
     def __init__(self):
-        self._cache: dict[int, dict[str, Any]] = {}
+        self._cache: dict[int, PlatoonCacheEntry] = {}
         self._lock = asyncio.Lock()
         self._cleanup_task = None
 
@@ -163,7 +177,7 @@ class PlatoonCache:
 
     async def batch_get_platoon_info(self, pids: list[int]) -> dict[int, dict | None]:
         """批量获取Platoon信息"""
-        result = {}
+        result: dict[int, dict | None] = {}
         async with self._lock:
             current_time = time.time()
             for pid in pids:

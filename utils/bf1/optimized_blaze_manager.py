@@ -5,6 +5,7 @@
 
 import asyncio
 import time
+from typing import TypedDict
 
 from loguru import logger
 
@@ -14,6 +15,13 @@ from utils.bf1.data_handle import BlazeData
 from utils.bf1.default_account import BF1DA
 from utils.bf1.gateway_api import api_instance
 from utils.bf1.performance_cache import bf1_performance_cache
+
+
+class ConnectionInfo(TypedDict):
+    """Blaze连接信息类型定义"""
+
+    socket: BlazeSocket
+    created_at: float
 
 
 class OptimizedBlazeManager:
@@ -26,14 +34,14 @@ class OptimizedBlazeManager:
     4. 批量处理优化
     """
 
-    def __init__(self):
-        self._connection_cache: dict[int, dict] = {}
-        self._lock = asyncio.Lock()
+    # 类级常量配置
+    CONNECTION_TIMEOUT = 20  # 从60秒降低到20秒
+    API_TIMEOUT = 15  # API调用超时15秒
+    MAX_CONNECTION_AGE_SECONDS = 300  # 连接最大生命周期5分钟
 
-        # 优化的超时配置
-        self.connection_timeout = 20  # 从60秒降低到20秒
-        self.api_timeout = 15  # API调用超时15秒
-        self.max_connection_age_seconds = 300  # 连接最大生命周期5分钟
+    def __init__(self):
+        self._connection_cache: dict[int, ConnectionInfo] = {}
+        self._lock = asyncio.Lock()
 
     async def get_optimized_player_list(
         self,
@@ -71,7 +79,7 @@ class OptimizedBlazeManager:
         try:
             # 使用优化的超时时间
             response = await asyncio.wait_for(
-                blaze_socket.send(packet), timeout=self.connection_timeout
+                blaze_socket.send(packet), timeout=self.CONNECTION_TIMEOUT
             )
         except asyncio.TimeoutError:
             try:
@@ -111,7 +119,7 @@ class OptimizedBlazeManager:
                     # 检查连接年龄，超过配置时间重新连接
                     if (
                         time.time() - connection_info["created_at"]
-                        < self.max_connection_age_seconds
+                        < self.MAX_CONNECTION_AGE_SECONDS
                     ):
                         logger.debug(f"复用现有Blaze连接: {pid}")
                         return socket
@@ -160,7 +168,7 @@ class OptimizedBlazeManager:
 
             # 使用优化的超时时间
             response = await asyncio.wait_for(
-                blaze_socket.send(login_packet), timeout=self.api_timeout
+                blaze_socket.send(login_packet), timeout=self.API_TIMEOUT
             )
 
             # 验证登录结果
@@ -241,7 +249,7 @@ class OptimizedBlazeManager:
                 try:
                     platoon_results = await asyncio.wait_for(
                         asyncio.gather(*platoon_tasks, return_exceptions=True),
-                        timeout=self.api_timeout,
+                        timeout=self.API_TIMEOUT,
                     )
 
                     for i, result in enumerate(platoon_results):

@@ -178,6 +178,9 @@ class OptimizedPlayerListPic:
     4. 降级渲染策略
     """
 
+    # 类级常量配置
+    DETAILED_STATS_TIMEOUT = 15.0  # 批量获取玩家战绩的超时时间（秒）
+
     @staticmethod
     async def draw_optimized(
         playerlist_data, server_info, bind_pid_list
@@ -289,10 +292,11 @@ class OptimizedPlayerListPic:
             for pid in pids
         ]
 
-        # 设置合理的超时时间（15秒）
+        # 设置合理的超时时间
         try:
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True), timeout=15.0
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=OptimizedPlayerListPic.DETAILED_STATS_TIMEOUT,
             )
         except asyncio.TimeoutError:
             logger.warning("批量获取玩家战绩超时，使用部分结果")
@@ -342,7 +346,9 @@ class OptimizedPlayerListPic:
                 if pid in stat_dict and stat_dict[pid] is not None:
                     try:
                         player_stat_data = stat_dict[pid]
-                        if player_stat_data:  # 额外的None检查
+                        # 额外检查确保数据不为空字典（API可能返回空的result）
+                        # 这种情况下应该使用默认等级0，而不是尝试访问不存在的键
+                        if player_stat_data:
                             time_seconds = player_stat_data.get("basicStats", {}).get(
                                 "timePlayed", 0
                             )
