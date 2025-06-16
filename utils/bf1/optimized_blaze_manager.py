@@ -8,6 +8,7 @@ import time
 
 from loguru import logger
 
+from utils.bf1.blaze.BlazeClient import BlazeClientManagerInstance
 from utils.bf1.blaze.BlazeSocket import BlazeSocket
 from utils.bf1.data_handle import BlazeData
 from utils.bf1.default_account import BF1DA
@@ -32,6 +33,7 @@ class OptimizedBlazeManager:
         # 优化的超时配置
         self.connection_timeout = 20  # 从60秒降低到20秒
         self.api_timeout = 15  # API调用超时15秒
+        self.max_connection_age_seconds = 300  # 连接最大生命周期5分钟
 
     async def get_optimized_player_list(
         self,
@@ -106,8 +108,11 @@ class OptimizedBlazeManager:
 
                 # 检查连接是否仍然有效
                 if socket.authenticated and socket.connect:
-                    # 检查连接年龄，超过5分钟重新连接
-                    if time.time() - connection_info["created_at"] < 300:
+                    # 检查连接年龄，超过配置时间重新连接
+                    if (
+                        time.time() - connection_info["created_at"]
+                        < self.max_connection_age_seconds
+                    ):
                         logger.debug(f"复用现有Blaze连接: {pid}")
                         return socket
                     else:
@@ -129,9 +134,6 @@ class OptimizedBlazeManager:
     async def _create_new_connection(self, pid: int) -> BlazeSocket | None:
         """创建新的Blaze连接"""
         try:
-            # 导入必要的模块
-            from utils.bf1.blaze.BlazeClient import BlazeClientManagerInstance
-
             # 获取连接
             blaze_socket = await BlazeClientManagerInstance.get_socket_for_pid(pid)
             if not blaze_socket:
@@ -166,7 +168,14 @@ class OptimizedBlazeManager:
                 name = response["data"]["DSNM"]
                 pid_response = response["data"]["PID"]
                 uid = response["data"]["UID"]
-                CGID = response["data"]["CGID"][2]
+
+                # 安全访问CGID数组
+                cgid_data = response["data"].get("CGID", [])
+                if isinstance(cgid_data, list) and len(cgid_data) > 2:
+                    CGID = cgid_data[2]
+                else:
+                    logger.warning(f"CGID数据格式异常: {cgid_data}")
+                    CGID = None
                 logger.success(
                     f"Blaze登录成功: Name:{name} Pid:{pid_response} Uid:{uid} CGID:{CGID}"
                 )
