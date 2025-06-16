@@ -26,13 +26,21 @@ class PlayerStatCache:
         self.max_cache_size = 1000  # 最大缓存1000个玩家战绩
 
     def _ensure_cleanup_task(self):
-        """确保清理任务已启动"""
+        """确保清理任务已启动
+
+        采用延迟初始化模式的原因：
+        1. 避免在模块导入时创建asyncio任务（此时可能没有事件循环）
+        2. 确保只在实际使用缓存时才启动清理任务
+        3. 兼容不同的应用启动模式和测试环境
+        """
         if self._cleanup_task is None or self._cleanup_task.done():
             try:
                 self._cleanup_task = asyncio.create_task(self._cleanup_expired_cache())
+                logger.debug("玩家战绩缓存清理任务已启动")
             except RuntimeError:
                 # 如果没有运行的事件循环，稍后再启动
-                pass
+                # 这种情况通常发生在模块导入阶段或测试环境中
+                logger.debug("事件循环未就绪，缓存清理任务将延迟启动")
 
     async def get_player_stat(self, pid: int) -> dict | None:
         """获取玩家战绩缓存"""
@@ -110,16 +118,22 @@ class PlatoonCache:
         self.max_cache_size = 500  # 最大缓存500个战队信息
 
     def _ensure_cleanup_task(self):
-        """确保清理任务已启动"""
+        """确保清理任务已启动
+
+        采用延迟初始化模式，与PlayerStatCache保持一致
+        """
         if self._cleanup_task is None or self._cleanup_task.done():
             try:
                 self._cleanup_task = asyncio.create_task(self._cleanup_expired_cache())
+                logger.debug("Platoon缓存清理任务已启动")
             except RuntimeError:
                 # 如果没有运行的事件循环，稍后再启动
-                pass
+                logger.debug("事件循环未就绪，Platoon缓存清理任务将延迟启动")
 
     async def get_platoon_info(self, pid: int) -> dict | None:
         """获取Platoon信息缓存"""
+        self._ensure_cleanup_task()  # 确保清理任务已启动
+
         async with self._lock:
             if pid in self._cache:
                 item = self._cache[pid]
@@ -135,6 +149,15 @@ class PlatoonCache:
     async def cache_platoon_info(self, pid: int, data: dict) -> None:
         """缓存Platoon信息"""
         async with self._lock:
+            # 检查缓存大小限制
+            if len(self._cache) >= self.max_cache_size:
+                # 删除最旧的缓存项
+                oldest_pid = min(
+                    self._cache.keys(), key=lambda k: self._cache[k]["timestamp"]
+                )
+                del self._cache[oldest_pid]
+                logger.debug(f"Platoon缓存已满，删除最旧项: {oldest_pid}")
+
             self._cache[pid] = {"data": data, "timestamp": time.time()}
             logger.debug(f"Platoon信息已缓存: {pid}")
 

@@ -5,6 +5,7 @@
 
 import asyncio
 import time
+
 from loguru import logger
 
 from utils.bf1.blaze.BlazeSocket import BlazeSocket
@@ -37,7 +38,6 @@ class OptimizedBlazeManager:
         game_ids: list[int],
         origin: bool = False,
         platoon: bool = False,
-        enable_stat_cache: bool = True,
     ) -> dict | None | str:
         """优化的玩家列表获取
 
@@ -114,8 +114,10 @@ class OptimizedBlazeManager:
                         logger.debug(f"Blaze连接过期，重新建立: {pid}")
                         try:
                             await socket.close()
-                        except Exception:
-                            pass
+                        except (ConnectionError, OSError) as e:
+                            logger.debug(f"关闭过期Blaze连接时出错: {e!r}")
+                        except Exception as e:
+                            logger.warning(f"关闭Blaze连接时发生未知错误: {e!r}")
                         del self._connection_cache[pid]
                 else:
                     logger.debug(f"Blaze连接无效，重新建立: {pid}")

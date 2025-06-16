@@ -71,6 +71,8 @@ from utils.bf1.draw import (
     PlayerWeaponPic,
 )
 from utils.bf1.map_team_info import MapData
+from utils.bf1.optimized_blaze_manager import optimized_blaze_manager
+from utils.bf1.optimized_player_list_pic import OptimizedPlayerListPic
 from utils.parse_messagechain import get_targets
 from utils.string import generate_random_str
 from utils.timeutils import DateTimeUtils
@@ -1940,8 +1942,6 @@ async def get_server_playerList_pic(
     #     ), quote=source)
 
     # 优化的blaze接口:
-    from utils.bf1.optimized_blaze_manager import optimized_blaze_manager
-    from utils.bf1.optimized_player_list_pic import OptimizedPlayerListPic
 
     playerlist_data = await optimized_blaze_manager.get_optimized_player_list(
         game_ids=server_gameid, platoon=True
