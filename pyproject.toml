@@ -239,9 +239,28 @@ docstring-code-format = true # 启用 docstring 代码片段格式化
 [dependency-groups]
 dev = [
     "pre-commit>=4.2.0",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
     "ruff>=0.11.13",
 ]
 
 # 配置 Ruff 的 PyUpgrade 功能（Python 版本兼容性优化）
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true # 保留 `from __future__ import annotations`，避免影响运行时类型检查
+
+# pytest 配置
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
