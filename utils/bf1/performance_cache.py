@@ -36,7 +36,7 @@ class PlayerStatCache:
         self._cleanup_task = None
 
         # 缓存配置
-        self.ttl = 300  # 5分钟缓存，战绩数据变化较慢
+        self.ttl = 1800  # 30分钟缓存，战绩数据变化较慢
         self.max_cache_size = 1000  # 最大缓存1000个玩家战绩
 
     def _ensure_cleanup_task(self):
