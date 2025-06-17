@@ -181,7 +181,7 @@ class OptimizedBlazeManager:
                 cgid_data = response["data"].get("CGID")
                 if (
                     cgid_data
-                    and isinstance(cgid_data, (list, tuple))
+                    and isinstance(cgid_data, list | tuple)
                     and len(cgid_data) >= 3
                 ):
                     CGID = cgid_data[2]
