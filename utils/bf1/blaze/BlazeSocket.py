@@ -106,6 +106,25 @@ class BlazeSocket:
         logger.success(f"已连接到Blaze服务器 {self.host}:{self.port}")
         _ = asyncio.create_task(self.receive_data())
 
+    def _is_writer_valid(self) -> bool:
+        """检查writer是否有效可用"""
+        if not self.writer:
+            return False
+        if self.writer.is_closing():
+            return False
+        transport = self.writer.transport
+        if not transport or transport.is_closing():
+            return False
+        # 检查SSL协议层状态
+        if hasattr(transport, "_ssl_protocol") and transport._ssl_protocol is None:
+            return False
+        return True
+
+    def _cleanup_connection(self):
+        """清理连接资源"""
+        self.writer = None
+        self.reader = None
+
     async def close(self):
         # 关闭连接
         self.connect = False
@@ -117,14 +136,29 @@ class BlazeSocket:
                 # 处理SSL错误：APPLICATION_DATA_AFTER_CLOSE_NOTIFY
                 logger.warning(f"SSL关闭连接时出现错误 (可忽略): {e}")
             except Exception as e:
-                logger.error(f"关闭连接时出现错误: {e}")
+                logger.exception(f"关闭连接时出现错误: {e}")
+        self._cleanup_connection()
         logger.success(f"已断开与Blaze服务器 {self.host}:{self.port} 的连接")
 
     async def keepalive(self):
         while self.connect:
             await asyncio.sleep(60)
-            if self.writer:
-                self.writer.write(keepalive)
+            # 检查连接状态和writer有效性
+            if self.connect and self._is_writer_valid():
+                try:
+                    self.writer.write(keepalive)
+                    await self.writer.drain()  # 确保数据发送
+                except Exception as e:
+                    logger.exception(f"Keepalive发送失败，连接可能已断开: {e}")
+                    self.connect = False
+                    self._cleanup_connection()
+                    break
+            elif self.connect:
+                # 连接标志为True但writer无效，说明连接已断开
+                logger.warning("检测到连接异常，writer无效，停止keepalive")
+                self.connect = False
+                self._cleanup_connection()
+                break
 
     async def send(self, packet, timeout=60, readable: bool = True):
         BlazeSocket.readable = readable
@@ -158,12 +192,21 @@ class BlazeSocket:
         # 请求数据包
         if not self.connect:
             raise ConnectionError("连接已关闭")
-        if isinstance(packet, dict):
-            self.writer.write(Blaze(packet).encode())
-        elif isinstance(packet, bytes):
-            self.writer.write(packet)
-        else:
-            raise TypeError("packet must be dict or bytes")
+        if not self._is_writer_valid():
+            raise ConnectionError("Writer无效，连接可能已断开")
+        try:
+            if isinstance(packet, dict):
+                self.writer.write(Blaze(packet).encode())
+            elif isinstance(packet, bytes):
+                self.writer.write(packet)
+            else:
+                raise TypeError("packet must be dict or bytes")
+            await self.writer.drain()  # 确保数据发送
+        except Exception as e:
+            logger.exception(f"发送数据包失败: {e}")
+            self.connect = False
+            self._cleanup_connection()
+            raise ConnectionError(f"发送数据包失败: {e}") from e
 
     async def receive_data(self):
         # 接收数据
@@ -171,10 +214,19 @@ class BlazeSocket:
             try:
                 data = await self.reader.read(65565)
             except ConnectionResetError:
+                logger.warning("连接被重置，正在清理资源")
                 self.connect = False
+                self._cleanup_connection()
+                break
+            except Exception as e:
+                logger.exception(f"接收数据时发生错误: {e}")
+                self.connect = False
+                self._cleanup_connection()
                 break
             if not data:
+                logger.warning("连接已断开，没有更多数据")
                 self.connect = False
+                self._cleanup_connection()
                 break
             await self.concat(data)
 
