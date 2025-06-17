@@ -177,12 +177,15 @@ class OptimizedBlazeManager:
                 pid_response = response["data"]["PID"]
                 uid = response["data"]["UID"]
 
-                # 安全访问CGID数组
-                cgid_data = response["data"].get("CGID", [])
-                if isinstance(cgid_data, list) and len(cgid_data) > 2:
+                # 安全地提取CGID（支持tuple和list）
+                cgid_data = response["data"].get("CGID")
+                if (
+                    cgid_data
+                    and isinstance(cgid_data, (list, tuple))
+                    and len(cgid_data) >= 3
+                ):
                     CGID = cgid_data[2]
                 else:
-                    logger.warning(f"CGID数据格式异常: {cgid_data}")
                     CGID = None
                 logger.success(
                     f"Blaze登录成功: Name:{name} Pid:{pid_response} Uid:{uid} CGID:{CGID}"

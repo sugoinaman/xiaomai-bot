@@ -1434,15 +1434,26 @@ class BF1BlazeManager:
             name = response["data"]["DSNM"]
             pid = response["data"]["PID"]
             uid = response["data"]["UID"]
-            CGID = response["data"]["CGID"][2]
+
+            # 安全地提取CGID（支持tuple和list）
+            cgid_data = response["data"].get("CGID")
+            if (
+                cgid_data
+                and isinstance(cgid_data, (list, tuple))
+                and len(cgid_data) >= 3
+            ):
+                CGID = cgid_data[2]
+            else:
+                CGID = None
+
             logger.success(
                 f"Blaze登录成功: Name:{name} Pid:{pid} Uid:{uid} CGID:{CGID}"
             )
             blaze_socket.authenticated = True
             BlazeClientManagerInstance.clients_by_pid[pid] = blaze_socket
             return blaze_socket
-        except Exception as e:
-            logger.error(f"Blaze登录失败: {response}, {e}")
+        except Exception:
+            logger.exception(f"Blaze登录失败: {response}")
             return None
 
     @staticmethod
