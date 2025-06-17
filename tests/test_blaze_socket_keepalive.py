@@ -93,6 +93,7 @@ class TestBlazeSocketKeepalive:
         mock_transport = Mock()
         mock_transport.is_closing.return_value = False
         mock_transport._ssl_protocol = Mock()  # 非None的SSL协议层
+        mock_transport.get_extra_info.return_value = Mock()  # 模拟有效的SSL对象
 
         mock_writer = Mock()
         mock_writer.is_closing.return_value = False
@@ -106,6 +107,7 @@ class TestBlazeSocketKeepalive:
         """测试transport没有_ssl_protocol属性时的检查（非SSL连接）"""
         mock_transport = Mock()
         mock_transport.is_closing.return_value = False
+        mock_transport.get_extra_info.return_value = None  # 没有SSL对象
         # 删除_ssl_protocol属性，模拟非SSL连接
         if hasattr(mock_transport, "_ssl_protocol"):
             delattr(mock_transport, "_ssl_protocol")
@@ -117,6 +119,38 @@ class TestBlazeSocketKeepalive:
 
         result = blaze_socket._is_writer_valid()
         assert result, "没有SSL协议层属性的有效writer应返回True"
+
+    def test_is_writer_valid_with_ssl_check_exception(self, blaze_socket):
+        """测试SSL状态检查抛出异常时的处理"""
+        mock_transport = Mock()
+        mock_transport.is_closing.return_value = False
+        # 模拟get_extra_info抛出异常
+        mock_transport.get_extra_info.side_effect = Exception("SSL检查异常")
+
+        mock_writer = Mock()
+        mock_writer.is_closing.return_value = False
+        mock_writer.transport = mock_transport
+        blaze_socket.writer = mock_writer
+
+        result = blaze_socket._is_writer_valid()
+        assert result, "SSL检查异常时应采用保守策略返回True"
+
+    def test_is_writer_valid_with_ssl_object_none_but_protocol_exists(
+        self, blaze_socket
+    ):
+        """测试SSL对象为None但协议层存在的情况"""
+        mock_transport = Mock()
+        mock_transport.is_closing.return_value = False
+        mock_transport.get_extra_info.return_value = None  # SSL对象为None
+        mock_transport._ssl_protocol = Mock()  # 但协议层存在
+
+        mock_writer = Mock()
+        mock_writer.is_closing.return_value = False
+        mock_writer.transport = mock_transport
+        blaze_socket.writer = mock_writer
+
+        result = blaze_socket._is_writer_valid()
+        assert result, "SSL对象为None但协议层存在时应返回True"
 
     def test_cleanup_connection(self, blaze_socket):
         """测试连接清理方法"""

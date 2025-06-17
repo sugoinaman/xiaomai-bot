@@ -115,9 +115,28 @@ class BlazeSocket:
         transport = self.writer.transport
         if not transport or transport.is_closing():
             return False
+
         # 检查SSL协议层状态
-        if hasattr(transport, "_ssl_protocol") and transport._ssl_protocol is None:
-            return False
+        # 注意：_ssl_protocol是asyncio内部属性，不是公共API的一部分
+        # 这是针对观察到的AttributeError: 'NoneType' object has no attribute '_write_appdata'的务实解决方案
+        # 当SSL连接断开时，_ssl_protocol可能变为None，但transport对象仍然存在
+        # 如果未来Python提供公共API来检查SSL层健康状态，应优先使用公共API
+        try:
+            # 首先尝试使用更安全的方法检查SSL状态
+            if hasattr(transport, "get_extra_info"):
+                ssl_object = transport.get_extra_info("ssl_object")
+                if ssl_object is None and hasattr(transport, "_ssl_protocol"):
+                    # 如果没有SSL对象但transport声称支持SSL，可能存在问题
+                    return transport._ssl_protocol is not None
+
+            # 作为后备方案，检查内部_ssl_protocol属性
+            if hasattr(transport, "_ssl_protocol") and transport._ssl_protocol is None:
+                return False
+        except Exception:
+            # 如果SSL状态检查失败，采用保守策略
+            # 假设连接可能有问题，但不完全阻止操作
+            logger.debug("SSL状态检查失败，采用保守策略继续")
+
         return True
 
     def _cleanup_connection(self):
