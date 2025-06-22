@@ -420,10 +420,6 @@ async def add_server_header(server_id: int, key: str, value: str) -> tuple[bool,
 
         key = key.strip()
 
-        # 防止覆盖必需的 x-self-name 头
-        if key.lower() == "x-self-name":
-            return False, "不能手动设置 x-self-name 请求头，该头部由系统自动管理"
-
         async with orm.async_session() as session:
             # 检查服务器是否存在
             result = await session.execute(
