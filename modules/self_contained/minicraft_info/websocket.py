@@ -24,6 +24,8 @@ class McWebSocketConnection:
         self.reconnect_attempts = 0
         self.max_reconnect_attempts = 5
         self.reconnect_delay = 5  # 秒
+        self.listen_task = None  # 消息监听任务
+        self._reconnecting = False  # 重连状态标志
 
     async def connect(self):
         """建立 WebSocket 连接"""
@@ -63,8 +65,16 @@ class McWebSocketConnection:
             self.reconnect_attempts = 0
             logger.success(f"成功连接到服务器 {server.server_name} 的 WebSocket")
 
-            # 启动消息监听，传入最新的服务器对象
-            asyncio.create_task(self._listen_messages(server))
+            # 取消旧的监听任务（如果存在）
+            if self.listen_task and not self.listen_task.done():
+                self.listen_task.cancel()
+                try:
+                    await self.listen_task
+                except asyncio.CancelledError:
+                    pass
+
+            # 启动新的消息监听任务
+            self.listen_task = asyncio.create_task(self._listen_messages(server))
             return True
 
         except Exception as e:
@@ -75,10 +85,21 @@ class McWebSocketConnection:
     async def disconnect(self):
         """断开 WebSocket 连接"""
         self.is_connected = False
+
+        # 取消监听任务
+        if self.listen_task and not self.listen_task.done():
+            self.listen_task.cancel()
+            try:
+                await self.listen_task
+            except asyncio.CancelledError:
+                pass
+
+        # 关闭 WebSocket 连接
         if self.websocket:
             await self.websocket.close()
             self.websocket = None
-            logger.info(f"已断开服务器 {self.server_name} 的 WebSocket 连接")
+
+        logger.info(f"已断开服务器 {self.server_name} 的 WebSocket 连接")
 
     async def send_message(self, message: str):
         """发送消息到 MC 服务器"""
@@ -114,31 +135,43 @@ class McWebSocketConnection:
         except websockets.exceptions.ConnectionClosed:
             logger.warning(f"服务器 {self.server_name} WebSocket 连接已关闭")
             self.is_connected = False
-            # 尝试重连
-            await self._reconnect()
+            # 尝试重连（避免重复重连）
+            if not self._reconnecting:
+                await self._reconnect()
         except Exception as e:
             logger.error(f"监听服务器 {self.server_name} 消息时出错: {e}")
             self.is_connected = False
 
     async def _reconnect(self):
         """重连机制"""
+        if self._reconnecting:
+            logger.debug(f"服务器 {self.server_name} 已在重连中，跳过")
+            return
+
         if self.reconnect_attempts >= self.max_reconnect_attempts:
             logger.error(f"服务器 {self.server_name} 重连次数已达上限，停止重连")
             return
 
-        self.reconnect_attempts += 1
-        logger.info(
-            f"尝试重连服务器 {self.server_name} (第 {self.reconnect_attempts} 次)"
-        )
+        self._reconnecting = True
+        try:
+            self.reconnect_attempts += 1
+            logger.info(
+                f"尝试重连服务器 {self.server_name} (第 {self.reconnect_attempts} 次)"
+            )
 
-        await asyncio.sleep(self.reconnect_delay)
+            await asyncio.sleep(self.reconnect_delay)
 
-        if await self.connect():
-            logger.success(f"服务器 {self.server_name} 重连成功")
-        else:
-            # 递增延迟时间
-            self.reconnect_delay = min(self.reconnect_delay * 2, 60)
-            await self._reconnect()
+            if await self.connect():
+                logger.success(f"服务器 {self.server_name} 重连成功")
+                self._reconnecting = False
+            else:
+                # 递增延迟时间
+                self.reconnect_delay = min(self.reconnect_delay * 2, 60)
+                self._reconnecting = False
+                await self._reconnect()
+        except Exception as e:
+            logger.error(f"重连过程中出错: {e}")
+            self._reconnecting = False
 
 
 class McWebSocketManager:
@@ -146,13 +179,25 @@ class McWebSocketManager:
 
     def __init__(self):
         self.connections: dict[int, McWebSocketConnection] = {}
+        self.recent_messages: dict[str, float] = {}  # 消息去重缓存
+        self.message_cache_duration = 5.0  # 消息缓存时间（秒）
 
     async def add_connection(self, server: McServer):
         """添加服务器连接"""
         if server.id in self.connections:
-            logger.warning(f"服务器 {server.server_name} 的连接已存在")
-            return
+            existing_connection = self.connections[server.id]
+            if existing_connection.is_connected:
+                logger.warning(
+                    f"服务器 {server.server_name} 的连接已存在且正常，跳过重复连接"
+                )
+                return
+            else:
+                logger.info(
+                    f"服务器 {server.server_name} 的连接已存在但已断开，先清理旧连接"
+                )
+                await self.remove_connection(server.id)
 
+        logger.info(f"正在为服务器 {server.server_name} 创建新的 WebSocket 连接")
         connection = McWebSocketConnection(server, self._handle_mc_message)
 
         if await connection.connect():
@@ -175,6 +220,49 @@ class McWebSocketManager:
         else:
             logger.warning(f"服务器 ID {server_id} 的连接不存在")
             return False
+
+    def get_connection_status(self) -> dict:
+        """获取所有连接的详细状态"""
+        status = {}
+        for server_id, connection in self.connections.items():
+            status[server_id] = {
+                "server_name": connection.server_name,
+                "is_connected": connection.is_connected,
+                "reconnect_attempts": connection.reconnect_attempts,
+                "reconnect_delay": connection.reconnect_delay,
+                "is_reconnecting": connection._reconnecting,
+                "has_listen_task": connection.listen_task is not None
+                and not connection.listen_task.done(),
+                "websocket_closed": connection.websocket is None
+                or connection.websocket.closed
+                if connection.websocket
+                else True,
+            }
+        return status
+
+    def _is_duplicate_message(self, message_key: str) -> bool:
+        """检查是否为重复消息"""
+        import time
+
+        current_time = time.time()
+
+        # 清理过期的消息缓存
+        expired_keys = [
+            key
+            for key, timestamp in self.recent_messages.items()
+            if current_time - timestamp > self.message_cache_duration
+        ]
+        for key in expired_keys:
+            del self.recent_messages[key]
+
+        # 检查是否为重复消息
+        if message_key in self.recent_messages:
+            logger.debug(f"检测到重复消息，跳过: {message_key}")
+            return True
+
+        # 记录新消息
+        self.recent_messages[message_key] = current_time
+        return False
 
     async def _handle_mc_message(self, server: McServer, data: dict):
         """处理来自 MC 服务器的消息"""
@@ -221,8 +309,20 @@ class McWebSocketManager:
             player_name = player_info.get("nickname", "未知玩家")
             message = data.get("message", "")
 
+            # 创建消息唯一标识符用于去重
+            message_key = (
+                f"chat_{server.id}_{player_name}_{message}_{data.get('timestamp', '')}"
+            )
+
+            # 检查是否为重复消息
+            if self._is_duplicate_message(message_key):
+                logger.debug(f"跳过重复聊天消息: {player_name}: {message}")
+                return
+
             # 格式化消息
             formatted_message = f"[{server.server_name}] {player_name}: {message}"
+
+            logger.info(f"处理聊天消息: {formatted_message}")
 
             # 发送到绑定的群组
             await self._send_to_bound_groups(server.id, formatted_message)
