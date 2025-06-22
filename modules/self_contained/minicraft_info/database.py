@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from urllib.parse import urlparse
 
 import websockets
@@ -452,23 +453,56 @@ async def add_server_header(server_id: int, key: str, value: str) -> tuple[bool,
                 return False, f"服务器ID {server_id} 不存在"
 
             server_name = server.server_name
-            current_headers = server.websocket_headers or {}
+            # 创建字典的深拷贝，避免就地修改问题
 
-            # 仅在headers为空时初始化x-self-name
+            current_headers = (
+                copy.deepcopy(server.websocket_headers)
+                if server.websocket_headers
+                else {}
+            )
+
+            # 添加调试日志
+            logger.debug(f"更新前的请求头: {server.websocket_headers}")
+
+            # 确保 x-self-name 始终存在（如果 headers 为空则初始化）
             if not current_headers:
+                current_headers = {"x-self-name": server_name}
+            elif "x-self-name" not in current_headers:
                 current_headers["x-self-name"] = server_name
 
             old_value = current_headers.get(key)
             current_headers[key] = value
 
+            logger.debug(f"更新后的请求头（提交前）: {current_headers}")
+
+            # 使用 flag_modified 明确告诉 SQLAlchemy 字段已修改
+            from sqlalchemy.orm.attributes import flag_modified
+
             server.websocket_headers = current_headers
+            flag_modified(server, "websocket_headers")
+
+            # 添加到会话中
+            session.add(server)
+
             await session.commit()
 
             # 刷新对象以确保获取最新数据
             await session.refresh(server)
 
             # 添加调试日志
-            logger.debug(f"数据库更新后的请求头: {server.websocket_headers}")
+            logger.info(f"数据库更新后的请求头: {server.websocket_headers}")
+
+            # 再次验证数据库中的数据
+            verification_result = await session.execute(
+                select(McServer).where(McServer.id == server_id)
+            )
+            verification_server = verification_result.scalar_one_or_none()
+            if verification_server:
+                logger.info(
+                    f"验证查询的请求头: {verification_server.websocket_headers}"
+                )
+            else:
+                logger.error("验证查询失败：找不到服务器")
 
             if old_value is None:
                 return True, f"成功为服务器 {server_name} 添加请求头 {key}: {value}"
@@ -507,8 +541,14 @@ async def remove_server_header(server_id: int, key: str) -> tuple[bool, str]:
 
             server_name = server.server_name
 
-            # 获取当前的 headers
-            current_headers = server.websocket_headers or {}
+            # 创建字典的深拷贝，避免就地修改问题
+            import copy
+
+            current_headers = (
+                copy.deepcopy(server.websocket_headers)
+                if server.websocket_headers
+                else {}
+            )
 
             # 检查要删除的头部是否存在
             if key not in current_headers:
@@ -520,8 +560,14 @@ async def remove_server_header(server_id: int, key: str) -> tuple[bool, str]:
             # 确保 x-self-name 始终存在
             current_headers["x-self-name"] = server_name
 
-            # 更新数据库
+            # 使用 flag_modified 明确告诉 SQLAlchemy 字段已修改
+            from sqlalchemy.orm.attributes import flag_modified
+
             server.websocket_headers = current_headers
+            flag_modified(server, "websocket_headers")
+
+            # 更新数据库
+            session.add(server)
             await session.commit()
 
             return (
