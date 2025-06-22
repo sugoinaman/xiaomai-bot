@@ -38,6 +38,7 @@ class McWebSocketConnection:
             logger.info(
                 f"正在连接到服务器 {self.server.server_name} 的 WebSocket: {self.server.websocket_url}"
             )
+            logger.debug(f"使用的请求头: {headers}")
 
             self.websocket = await websockets.connect(
                 self.server.websocket_url,
