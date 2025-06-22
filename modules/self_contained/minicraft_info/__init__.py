@@ -128,7 +128,7 @@ async def init_websocket_connections(app: Ariadne):
 @listen(GroupMessage)
 @decorate(
     Distribute.require(),
-    Function.require(channel.module),
+    Function.require(channel.module, notice=False),
 )
 async def forward_qq_to_mc(group: Group, member: Member, message: MessageChain):
     """将 QQ 群消息转发到 MC 服务器"""
