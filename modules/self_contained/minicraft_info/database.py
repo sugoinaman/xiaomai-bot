@@ -414,14 +414,12 @@ async def get_all_sync_enabled_bindings() -> list[tuple[McServer, McGroupBind]]:
 async def add_server_header(server_id: int, key: str, value: str) -> tuple[bool, str]:
     """添加或更新服务器的 WebSocket 请求头"""
     try:
-        # 验证参数
         if not key or not key.strip():
             return False, "请求头名称不能为空"
 
         key = key.strip()
 
         async with orm.async_session() as session:
-            # 检查服务器是否存在
             result = await session.execute(
                 select(McServer).where(McServer.id == server_id)
             )
@@ -430,18 +428,15 @@ async def add_server_header(server_id: int, key: str, value: str) -> tuple[bool,
                 return False, f"服务器ID {server_id} 不存在"
 
             server_name = server.server_name
-
-            # 获取当前的 headers，如果为空则初始化
             current_headers = server.websocket_headers or {}
 
-            # 确保 x-self-name 始终存在
-            current_headers["x-self-name"] = server_name
+            # 仅在headers为空时初始化x-self-name
+            if not current_headers:
+                current_headers["x-self-name"] = server_name
 
-            # 添加或更新指定的头部
             old_value = current_headers.get(key)
             current_headers[key] = value
 
-            # 更新数据库
             server.websocket_headers = current_headers
             await session.commit()
 
