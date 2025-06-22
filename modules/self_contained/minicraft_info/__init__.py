@@ -606,9 +606,15 @@ async def mcadmin_websocket_status(app: Ariadne, group: Group, source: Source):
         message_parts = ["WebSocket 连接状态：\n"]
         for server_id, connection in ws_manager.connections.items():
             status = "🟢 已连接" if connection.is_connected else "🔴 已断开"
+
+            # 获取服务器信息用于显示
+            server = await get_mc_server_by_id(server_id)
+            server_name = server.server_name if server else f"ID {server_id}"
+            websocket_url = server.websocket_url if server else "未知"
+
             message_parts.append(
-                f"服务器 ID {server_id} ({connection.server.server_name}): {status}\n"
-                f"  WebSocket URL: {connection.server.websocket_url}\n"
+                f"服务器 ID {server_id} ({server_name}): {status}\n"
+                f"  WebSocket URL: {websocket_url}\n"
                 f"  重连次数: {connection.reconnect_attempts}\n"
             )
 

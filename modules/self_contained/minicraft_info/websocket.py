@@ -16,7 +16,8 @@ class McWebSocketConnection:
     """单个 WebSocket 连接的封装"""
 
     def __init__(self, server: McServer, message_handler: Callable):
-        self.server = server
+        self.server_id = server.id  # 只保存服务器ID，不保存对象引用
+        self.server_name = server.server_name  # 保存服务器名称用于日志
         self.message_handler = message_handler
         self.websocket = None
         self.is_connected = False
@@ -26,22 +27,33 @@ class McWebSocketConnection:
 
     async def connect(self):
         """建立 WebSocket 连接"""
-        if not self.server.websocket_url:
-            logger.warning(f"服务器 {self.server.server_name} 没有配置 WebSocket URL")
+        # 动态获取最新的服务器信息
+        from .database import get_mc_server_by_id
+
+        server = await get_mc_server_by_id(self.server_id)
+        if not server:
+            logger.error(f"无法获取服务器 ID {self.server_id} 的信息")
+            return False
+
+        # 更新服务器名称（可能已更改）
+        self.server_name = server.server_name
+
+        if not server.websocket_url:
+            logger.warning(f"服务器 {server.server_name} 没有配置 WebSocket URL")
             return False
 
         try:
-            headers = self.server.websocket_headers or {}
+            headers = server.websocket_headers or {}
             if "x-self-name" not in headers:
-                headers["x-self-name"] = self.server.server_name
+                headers["x-self-name"] = server.server_name
 
             logger.info(
-                f"正在连接到服务器 {self.server.server_name} 的 WebSocket: {self.server.websocket_url}"
+                f"正在连接到服务器 {server.server_name} 的 WebSocket: {server.websocket_url}"
             )
             logger.debug(f"使用的请求头: {headers}")
 
             self.websocket = await websockets.connect(
-                self.server.websocket_url,
+                server.websocket_url,
                 additional_headers=headers,
                 ping_interval=30,
                 ping_timeout=10,
@@ -49,16 +61,14 @@ class McWebSocketConnection:
 
             self.is_connected = True
             self.reconnect_attempts = 0
-            logger.success(f"成功连接到服务器 {self.server.server_name} 的 WebSocket")
+            logger.success(f"成功连接到服务器 {server.server_name} 的 WebSocket")
 
-            # 启动消息监听
-            asyncio.create_task(self._listen_messages())
+            # 启动消息监听，传入最新的服务器对象
+            asyncio.create_task(self._listen_messages(server))
             return True
 
         except Exception as e:
-            logger.error(
-                f"连接到服务器 {self.server.server_name} 的 WebSocket 失败: {e}"
-            )
+            logger.error(f"连接到服务器 {server.server_name} 的 WebSocket 失败: {e}")
             self.is_connected = False
             return False
 
@@ -68,14 +78,12 @@ class McWebSocketConnection:
         if self.websocket:
             await self.websocket.close()
             self.websocket = None
-            logger.info(f"已断开服务器 {self.server.server_name} 的 WebSocket 连接")
+            logger.info(f"已断开服务器 {self.server_name} 的 WebSocket 连接")
 
     async def send_message(self, message: str):
         """发送消息到 MC 服务器"""
         if not self.is_connected or not self.websocket:
-            logger.warning(
-                f"服务器 {self.server.server_name} WebSocket 未连接，无法发送消息"
-            )
+            logger.warning(f"服务器 {self.server_name} WebSocket 未连接，无法发送消息")
             return False
 
         try:
@@ -84,49 +92,49 @@ class McWebSocketConnection:
             message_data = {"api": "broadcast", "data": {"message": message}}
 
             await self.websocket.send(json.dumps(message_data))
-            logger.debug(f"向服务器 {self.server.server_name} 发送消息: {message}")
+            logger.debug(f"向服务器 {self.server_name} 发送消息: {message}")
             return True
 
         except Exception as e:
-            logger.error(f"向服务器 {self.server.server_name} 发送消息失败: {e}")
+            logger.error(f"向服务器 {self.server_name} 发送消息失败: {e}")
             return False
 
-    async def _listen_messages(self):
+    async def _listen_messages(self, server):
         """监听来自 MC 服务器的消息"""
         try:
             async for message in self.websocket:
                 try:
                     data = json.loads(message)
-                    await self.message_handler(self.server, data)
+                    await self.message_handler(server, data)
                 except json.JSONDecodeError:
                     logger.warning(f"收到无效的 JSON 消息: {message}")
                 except Exception as e:
                     logger.error(f"处理消息时出错: {e}")
 
         except websockets.exceptions.ConnectionClosed:
-            logger.warning(f"服务器 {self.server.server_name} WebSocket 连接已关闭")
+            logger.warning(f"服务器 {self.server_name} WebSocket 连接已关闭")
             self.is_connected = False
             # 尝试重连
             await self._reconnect()
         except Exception as e:
-            logger.error(f"监听服务器 {self.server.server_name} 消息时出错: {e}")
+            logger.error(f"监听服务器 {self.server_name} 消息时出错: {e}")
             self.is_connected = False
 
     async def _reconnect(self):
         """重连机制"""
         if self.reconnect_attempts >= self.max_reconnect_attempts:
-            logger.error(f"服务器 {self.server.server_name} 重连次数已达上限，停止重连")
+            logger.error(f"服务器 {self.server_name} 重连次数已达上限，停止重连")
             return
 
         self.reconnect_attempts += 1
         logger.info(
-            f"尝试重连服务器 {self.server.server_name} (第 {self.reconnect_attempts} 次)"
+            f"尝试重连服务器 {self.server_name} (第 {self.reconnect_attempts} 次)"
         )
 
         await asyncio.sleep(self.reconnect_delay)
 
         if await self.connect():
-            logger.success(f"服务器 {self.server.server_name} 重连成功")
+            logger.success(f"服务器 {self.server_name} 重连成功")
         else:
             # 递增延迟时间
             self.reconnect_delay = min(self.reconnect_delay * 2, 60)
