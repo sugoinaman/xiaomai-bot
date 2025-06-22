@@ -64,6 +64,7 @@ dependencies = [
     "restrictedpython>=8.0",
     "scipy>=1.15.1",
     "tomli>=2.2.1",
+    "websockets>=15.0.1",
 ]
 
 [tool.uv]
