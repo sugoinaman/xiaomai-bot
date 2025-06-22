@@ -1,17 +1,37 @@
 {
   "level": 1,
   "name": "MCInfo",
-  "version": "0.2",
-  "display_name": "MineCraft查询",
+  "version": "2.0",
+  "display_name": "MineCraft服务器管理与聊天互通",
   "authors": [
     "13"
   ],
-  "description": "查询MC服务器信息",
+  "description": "MC服务器查询、管理和聊天互通功能，支持与鹊桥mod的WebSocket连接",
   "usage": [
-    "查询服务器信息: /mcs 服务器ip",
-    "查询在线人数: /mcpl 服务器ip"
+    "查询服务器信息: /mcs [服务器ip]",
+    "查询在线人数: /mcpl [服务器ip]",
+    "查看绑定服务器: /mclist",
+    "管理员命令:",
+    "  添加服务器: /mcadmin add <地址> <名称> [websocket_url]",
+    "  删除服务器: /mcadmin remove <服务器ID>",
+    "  更新服务器: /mcadmin update <服务器ID> [--name <名称>] [--address <地址>] [--websocket <URL>]",
+    "  列出服务器: /mcadmin list",
+    "  绑定服务器: /mcadmin bind <服务器ID> [群号]",
+    "  解绑服务器: /mcadmin unbind <服务器ID> [群号]",
+    "  聊天互通: /mcadmin sync <服务器ID> <on/off> [群号]",
+    "  连接状态: /mcadmin status",
+    "聊天互通功能:",
+    "  MC→QQ: [服务器名] 玩家昵称: 消息内容",
+    "  QQ→MC: [QQ-群名] 昵称: 消息内容",
+    "  支持玩家加入/离开/死亡等事件通知"
   ],
   "example": [
+    "/mcs mc.hypixel.net",
+    "/mclist",
+    "/mcadmin add mc.hypixel.net Hypixel ws://localhost:8080",
+    "/mcadmin bind 1",
+    "/mcadmin sync 1 on",
+    "/mcadmin update 1 --name 新名称 --websocket ws://new-url:8080"
   ],
   "default_switch": true,
   "default_notice": true
