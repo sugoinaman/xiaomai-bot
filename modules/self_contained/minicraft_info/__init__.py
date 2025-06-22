@@ -31,8 +31,11 @@ from .database import (
     add_mc_server,
     bind_server_to_group,
     get_group_bound_servers,
+    get_mc_server_by_id,
+    get_server_bound_groups,
     list_mc_servers,
     remove_mc_server,
+    remove_server_header,
     toggle_chat_sync,
     unbind_server_from_group,
     update_mc_server,
@@ -864,15 +867,7 @@ async def mcadmin_header_add(
             if sid in ws_manager.connections:
                 await ws_manager.remove_connection(sid)
 
-                # 获取更新后的服务器信息
-                from .database import get_server_bound_groups, list_mc_servers
-
-                servers = await list_mc_servers()
-                updated_server = None
-                for server in servers:
-                    if server.id == sid:
-                        updated_server = server
-                        break
+                updated_server = await get_mc_server_by_id(sid)
 
                 if updated_server and updated_server.websocket_url:
                     # 检查是否有启用聊天同步的群组
@@ -909,8 +904,6 @@ async def mcadmin_header_add(
 async def mcadmin_header_remove(
     app: Ariadne, group: Group, source: Source, server_id: RegexResult, key: RegexResult
 ):
-    from .database import remove_server_header
-
     try:
         sid = int(server_id.result.display)
     except ValueError:
@@ -927,15 +920,7 @@ async def mcadmin_header_remove(
             if sid in ws_manager.connections:
                 await ws_manager.remove_connection(sid)
 
-                # 获取更新后的服务器信息
-                from .database import get_server_bound_groups, list_mc_servers
-
-                servers = await list_mc_servers()
-                updated_server = None
-                for server in servers:
-                    if server.id == sid:
-                        updated_server = server
-                        break
+                updated_server = await get_mc_server_by_id(sid)
 
                 if updated_server and updated_server.websocket_url:
                     # 检查是否有启用聊天同步的群组

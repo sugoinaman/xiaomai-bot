@@ -246,10 +246,34 @@ async def list_mc_servers() -> list[McServer]:
     try:
         async with orm.async_session() as session:
             result = await session.execute(select(McServer).order_by(McServer.id))
-            return result.scalars().all()
+            servers = result.scalars().all()
+
+            # 确保所有关联数据都被加载，避免延迟加载问题
+            for server in servers:
+                # 访问 websocket_headers 属性以确保数据被加载
+                _ = server.websocket_headers
+
+            return servers
     except Exception as e:
         logger.exception(f"获取服务器列表失败: {e}")
         return []
+
+
+async def get_mc_server_by_id(server_id: int) -> McServer | None:
+    """根据ID获取单个MC服务器的最新信息"""
+    try:
+        async with orm.async_session() as session:
+            result = await session.execute(
+                select(McServer).where(McServer.id == server_id)
+            )
+            server = result.scalar_one_or_none()
+            if server:
+                # 确保 websocket_headers 数据被加载
+                _ = server.websocket_headers
+            return server
+    except Exception as e:
+        logger.exception(f"获取服务器信息失败: {e}")
+        return None
 
 
 async def bind_server_to_group(server_id: int, group_id: int) -> tuple[bool, str]:
@@ -439,6 +463,12 @@ async def add_server_header(server_id: int, key: str, value: str) -> tuple[bool,
 
             server.websocket_headers = current_headers
             await session.commit()
+
+            # 刷新对象以确保获取最新数据
+            await session.refresh(server)
+
+            # 添加调试日志
+            logger.debug(f"数据库更新后的请求头: {server.websocket_headers}")
 
             if old_value is None:
                 return True, f"成功为服务器 {server_name} 添加请求头 {key}: {value}"
