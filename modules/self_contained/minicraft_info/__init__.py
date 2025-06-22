@@ -629,6 +629,56 @@ async def mcadmin_websocket_status(app: Ariadne, group: Group, source: Source):
         )
 
 
+# 管理员命令：详细调试 WebSocket 连接状态
+@listen(GroupMessage)
+@dispatch(Twilight([FullMatch("/mcadmin debug")]))
+@decorate(
+    Distribute.require(),
+    Function.require(channel.module),
+    FrequencyLimitation.require(channel.module),
+    Permission.group_require(channel.metadata.level, if_noticed=True),
+    Permission.user_require(Permission.Master, if_noticed=True),
+)
+async def mcadmin_websocket_debug(app: Ariadne, group: Group, source: Source):
+    """详细调试 WebSocket 连接状态"""
+    try:
+        if not ws_manager.connections:
+            await app.send_message(
+                group, MessageChain("当前没有活跃的 WebSocket 连接"), quote=source
+            )
+            return
+
+        status_info = ws_manager.get_connection_status()
+        message_parts = ["WebSocket 连接详细状态：\n\n"]
+
+        for server_id, status in status_info.items():
+            message_parts.append(
+                f"🔧 服务器 ID {server_id} ({status['server_name']}):\n"
+            )
+            message_parts.append(
+                f"  ├─ 连接状态: {'🟢 已连接' if status['is_connected'] else '🔴 已断开'}\n"
+            )
+            message_parts.append(f"  ├─ 重连次数: {status['reconnect_attempts']}\n")
+            message_parts.append(f"  ├─ 重连延迟: {status['reconnect_delay']}秒\n")
+            message_parts.append(
+                f"  ├─ 重连中: {'是' if status['is_reconnecting'] else '否'}\n"
+            )
+            message_parts.append(
+                f"  ├─ 监听任务: {'运行中' if status['has_listen_task'] else '已停止'}\n"
+            )
+            message_parts.append(
+                f"  └─ WebSocket: {'已关闭' if status['websocket_closed'] else '已打开'}\n\n"
+            )
+
+        await app.send_message(
+            group, MessageChain("".join(message_parts)), quote=source
+        )
+
+    except Exception as e:
+        logger.error(f"调试 WebSocket 状态时出错: {e}")
+        await app.send_message(group, MessageChain(f"调试失败: {str(e)}"), quote=source)
+
+
 # 普通用户命令：查看当前群绑定的服务器列表
 @listen(GroupMessage)
 @dispatch(Twilight([FullMatch("/mclist")]))
