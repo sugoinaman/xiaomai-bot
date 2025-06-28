@@ -96,15 +96,50 @@ class McWebSocketConnection:
 
         # 关闭 WebSocket 连接
         if self.websocket:
-            await self.websocket.close()
-            self.websocket = None
+            try:
+                if not self.websocket.closed:
+                    await self.websocket.close()
+                    logger.debug(f"服务器 {self.server_name} WebSocket 连接已主动关闭")
+                else:
+                    logger.debug(
+                        f"服务器 {self.server_name} WebSocket 连接已处于关闭状态"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"关闭服务器 {self.server_name} WebSocket 连接时出错: {e}"
+                )
+            finally:
+                self.websocket = None
 
         logger.info(f"已断开服务器 {self.server_name} 的 WebSocket 连接")
 
+    def _is_connection_valid(self) -> bool:
+        """检查WebSocket连接是否有效可用"""
+        if not self.is_connected:
+            return False
+        if not self.websocket:
+            return False
+        if self.websocket.closed:
+            # 连接已关闭，同步更新状态
+            self.is_connected = False
+            return False
+        return True
+
     async def send_message(self, message: str):
         """发送消息到 MC 服务器"""
-        if not self.is_connected or not self.websocket:
-            logger.warning(f"服务器 {self.server_name} WebSocket 未连接，无法发送消息")
+        if not self._is_connection_valid():
+            status_info = []
+            if not self.is_connected:
+                status_info.append("is_connected=False")
+            if not self.websocket:
+                status_info.append("websocket=None")
+            elif self.websocket.closed:
+                status_info.append("websocket.closed=True")
+
+            logger.warning(
+                f"服务器 {self.server_name} WebSocket 连接无效，无法发送消息 "
+                f"({', '.join(status_info)})"
+            )
             return False
 
         try:
@@ -116,14 +151,32 @@ class McWebSocketConnection:
             logger.debug(f"向服务器 {self.server_name} 发送消息: {message}")
             return True
 
+        except websockets.exceptions.ConnectionClosed as e:
+            # 连接已关闭，更新状态并记录详细信息
+            self.is_connected = False
+            logger.error(
+                f"向服务器 {self.server_name} 发送消息失败: WebSocket连接已关闭 "
+                f"(code={e.code}, reason='{e.reason}')"
+            )
+            return False
         except Exception as e:
             logger.error(f"向服务器 {self.server_name} 发送消息失败: {e}")
+            # 如果是连接相关错误，更新连接状态
+            if "connection" in str(e).lower() or "closed" in str(e).lower():
+                self.is_connected = False
             return False
 
     async def _listen_messages(self, server):
         """监听来自 MC 服务器的消息"""
         try:
             async for message in self.websocket:
+                # 在处理每条消息前检查连接状态
+                if not self._is_connection_valid():
+                    logger.warning(
+                        f"服务器 {self.server_name} 连接状态异常，停止消息监听"
+                    )
+                    break
+
                 try:
                     data = json.loads(message)
                     await self.message_handler(server, data)
@@ -132,9 +185,24 @@ class McWebSocketConnection:
                 except Exception as e:
                     logger.error(f"处理消息时出错: {e}")
 
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning(f"服务器 {self.server_name} WebSocket 连接已关闭")
+        except websockets.exceptions.ConnectionClosed as e:
+            # 记录详细的连接关闭信息
             self.is_connected = False
+            close_info = f"code={e.code}"
+            if e.reason:
+                close_info += f", reason='{e.reason}'"
+
+            logger.warning(
+                f"服务器 {self.server_name} WebSocket 连接已关闭 ({close_info})"
+            )
+
+            # 根据关闭代码决定是否重连
+            if e.code in [1000, 1001]:  # 正常关闭或going away
+                logger.info(f"服务器 {self.server_name} 正常关闭连接，尝试重连")
+            elif e.code in [1002, 1003]:  # 协议错误或不支持的数据
+                logger.error(f"服务器 {self.server_name} 因协议错误关闭连接，停止重连")
+                return
+
             # 尝试重连（避免重复重连）
             if not self._reconnecting:
                 await self._reconnect()
@@ -216,7 +284,14 @@ class McWebSocketManager:
     async def send_to_server(self, server_id: int, message: str):
         """向指定服务器发送消息"""
         if server_id in self.connections:
-            return await self.connections[server_id].send_message(message)
+            connection = self.connections[server_id]
+            if connection._is_connection_valid():
+                return await connection.send_message(message)
+            else:
+                logger.warning(
+                    f"服务器 ID {server_id} ({connection.server_name}) 的连接无效，无法发送消息"
+                )
+                return False
         else:
             logger.warning(f"服务器 ID {server_id} 的连接不存在")
             return False
@@ -225,14 +300,19 @@ class McWebSocketManager:
         """获取所有连接的详细状态"""
         status = {}
         for server_id, connection in self.connections.items():
+            # 使用连接的有效性检查方法
+            is_valid = connection._is_connection_valid()
+
             status[server_id] = {
                 "server_name": connection.server_name,
                 "is_connected": connection.is_connected,
+                "is_connection_valid": is_valid,
                 "reconnect_attempts": connection.reconnect_attempts,
                 "reconnect_delay": connection.reconnect_delay,
                 "is_reconnecting": connection._reconnecting,
                 "has_listen_task": connection.listen_task is not None
                 and not connection.listen_task.done(),
+                "websocket_exists": connection.websocket is not None,
                 "websocket_closed": connection.websocket is None
                 or connection.websocket.closed
                 if connection.websocket

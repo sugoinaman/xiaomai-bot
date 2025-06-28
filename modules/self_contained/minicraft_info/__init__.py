@@ -55,6 +55,67 @@ channel.meta["author"] = "13"
 channel.metadata = module_controller.get_metadata_from_path(Path(__file__))
 
 
+async def resolve_server_from_input(
+    group_id: int, user_input: str
+) -> tuple[str | None, str | None]:
+    """
+    根据用户输入解析服务器地址
+
+    Args:
+        group_id: 群组ID
+        user_input: 用户输入（序号或服务器地址）
+
+    Returns:
+        tuple[str | None, str | None]: (server_address, error_message)
+        - 成功时：(服务器地址, None)
+        - 失败时：(None, 错误信息)
+    """
+    try:
+        # 获取当前群组绑定的服务器列表
+        bound_servers = await get_group_bound_servers(group_id)
+
+        if not bound_servers:
+            return None, "当前群组没有绑定任何服务器"
+
+        # 检查是否为数字（序号）
+        # 处理正数和负数的情况
+        try:
+            index = int(user_input)
+
+            # 检查序号是否在有效范围内
+            if 1 <= index <= len(bound_servers):
+                server_address = bound_servers[index - 1][0].server_address
+                return server_address, None
+            else:
+                return None, f"序号无效，请输入 1-{len(bound_servers)} 之间的数字"
+        except ValueError:
+            # 不是数字，继续处理为服务器地址
+            pass
+
+        # 不是数字，当作服务器地址处理
+        # 检查是否为绑定服务器中的地址
+        for server, _ in bound_servers:
+            if server.server_address == user_input:
+                return user_input, None
+
+        # 不在绑定列表中，但可能是有效的服务器地址，直接返回
+        # 让调用方去验证服务器是否可访问
+        if "." in user_input and ":" in user_input:
+            return user_input, None
+        elif "." in user_input:
+            # 如果只有域名没有端口，添加默认端口
+            return f"{user_input}:25565", None
+        else:
+            return (
+                None,
+                f"无效的服务器地址或序号。请输入：\n• 序号（1-{len(bound_servers)}）\n• 服务器地址（如：mc.hypixel.net 或 mc.hypixel.net:25565）",
+            )
+
+    except Exception as e:
+        logger.error(f"解析服务器输入时出错: {e}")
+        return None, f"解析输入时出错: {str(e)}"
+
+
 # 应用启动时初始化 WebSocket 连接
 @listen(ApplicationLaunched)
 async def init_websocket_connections(app: Ariadne):
@@ -743,24 +804,53 @@ async def server_info_handle(
             )
             return
 
-        # 如果有多个绑定服务器，显示列表让用户选择
-        if len(bound_servers) > 1:
-            message_parts = [
-                "当前群组绑定了多个服务器，请使用 /mcs <服务器地址> 查询指定服务器：\n"
-            ]
-            for server, _ in bound_servers:
-                message_parts.append(
-                    f"• {server.server_name}: {server.server_address}\n"
-                )
-            await app.send_message(
-                group, MessageChain("".join(message_parts)), quote=source
-            )
-            return
+        # 无参数时始终显示所有绑定服务器的详细信息列表
+        message_parts = ["📋 当前群组绑定的服务器信息：\n\n"]
 
-        # 只有一个绑定服务器，直接查询
-        server_address = bound_servers[0][0].server_address
+        for i, (server, bind) in enumerate(bound_servers, 1):
+            try:
+                # 查询服务器信息
+                result = await get_minecraft_server_info(server.server_address)
+
+                if isinstance(result, str):
+                    # 查询失败
+                    message_parts.append(f"🔴 服务器{i}：{server.server_name}\n")
+                    message_parts.append(f"地址：{server.server_address}\n")
+                    message_parts.append(f"状态：查询失败 - {result}\n\n")
+                else:
+                    # 查询成功
+                    sync_status = "🔗" if bind.chat_sync_enabled else "❌"
+                    message_parts.append(f"🟢 服务器{i}：{server.server_name}\n")
+                    message_parts.append(f"地址：{server.server_address}\n")
+                    message_parts.append(f"描述：{result['description']}\n")
+                    message_parts.append(f"游戏版本：{result['version']}\n")
+                    message_parts.append(
+                        f"人数：{result['online_players']}/{result['max_players']}\n"
+                    )
+                    message_parts.append(f"PING：{result['ping']}ms\n")
+                    message_parts.append(f"聊天互通：{sync_status}\n\n")
+
+            except Exception as e:
+                logger.error(f"查询服务器 {server.server_name} 信息时出错: {e}")
+                message_parts.append(f"🔴 服务器{i}：{server.server_name}\n")
+                message_parts.append(f"地址：{server.server_address}\n")
+                message_parts.append("状态：查询出错\n\n")
+
+        message_parts.append("💡 提示：使用 /mcs <序号> 或 /mcs <地址> 查询单个服务器")
+
+        await app.send_message(
+            group, MessageChain("".join(message_parts)), quote=source
+        )
+        return
     else:
-        server_address = server_host.result.display
+        # 处理用户输入的参数
+        server_address, error_message = await resolve_server_from_input(
+            group.id, server_host.result.display.strip()
+        )
+
+        if error_message:
+            await app.send_message(group, MessageChain(error_message), quote=source)
+            return
 
     result = await get_minecraft_server_info(server_address)
     if isinstance(result, str):
@@ -819,15 +909,25 @@ async def server_player_handle(
             )
             return
 
-        # 如果有多个绑定服务器，显示列表让用户选择
+        # 如果有多个绑定服务器，显示选择提示
         if len(bound_servers) > 1:
             message_parts = [
-                "当前群组绑定了多个服务器，请使用 /mcpl <服务器地址> 查询指定服务器：\n"
+                "👥 当前群组绑定了多个服务器，请选择要查询玩家列表的服务器：\n\n"
             ]
-            for server, _ in bound_servers:
+
+            for i, (server, bind) in enumerate(bound_servers, 1):
+                sync_status = "🔗" if bind.chat_sync_enabled else "❌"
+                status = "✅" if server.is_active else "❌"
                 message_parts.append(
-                    f"• {server.server_name}: {server.server_address}\n"
+                    f"{status} {i}. {server.server_name}\n"
+                    f"   地址: {server.server_address}\n"
+                    f"   聊天互通: {sync_status}\n\n"
                 )
+
+            message_parts.append("💡 使用方法：\n")
+            message_parts.append("• 通过序号查询: /mcpl 1 或 /mcpl 2\n")
+            message_parts.append("• 通过地址查询: /mcpl <服务器地址>")
+
             await app.send_message(
                 group, MessageChain("".join(message_parts)), quote=source
             )
@@ -836,7 +936,14 @@ async def server_player_handle(
         # 只有一个绑定服务器，直接查询
         server_address = bound_servers[0][0].server_address
     else:
-        server_address = server_host.result.display
+        # 处理用户输入的参数
+        server_address, error_message = await resolve_server_from_input(
+            group.id, server_host.result.display.strip()
+        )
+
+        if error_message:
+            await app.send_message(group, MessageChain(error_message), quote=source)
+            return
 
     result = await get_minecraft_server_info(server_address)
     if isinstance(result, str):
