@@ -84,8 +84,6 @@ class McWebSocketConnection:
 
     async def disconnect(self):
         """断开 WebSocket 连接"""
-        self.is_connected = False
-
         # 取消监听任务
         if self.listen_task and not self.listen_task.done():
             self.listen_task.cancel()
@@ -108,9 +106,9 @@ class McWebSocketConnection:
                 logger.warning(
                     f"关闭服务器 {self.server_name} WebSocket 连接时出错: {e}"
                 )
-            finally:
-                self.websocket = None
 
+        # 使用统一的清理方法
+        self._cleanup_connection()
         logger.info(f"已断开服务器 {self.server_name} 的 WebSocket 连接")
 
     def _is_connection_valid(self) -> bool:
@@ -120,10 +118,27 @@ class McWebSocketConnection:
         if not self.websocket:
             return False
         if self.websocket.closed:
-            # 连接已关闭，同步更新状态
-            self.is_connected = False
+            # 连接已关闭，清理资源并更新状态
+            logger.debug(
+                f"检测到服务器 {self.server_name} 的 WebSocket 连接已关闭，清理资源"
+            )
+            self._cleanup_connection()
             return False
         return True
+
+    def _cleanup_connection(self):
+        """清理连接相关资源"""
+        self.is_connected = False
+
+        # 取消监听任务
+        if self.listen_task and not self.listen_task.done():
+            self.listen_task.cancel()
+            logger.debug(f"已取消服务器 {self.server_name} 的消息监听任务")
+
+        # 清理 WebSocket 对象
+        if self.websocket:
+            self.websocket = None
+            logger.debug(f"已清理服务器 {self.server_name} 的 WebSocket 对象")
 
     async def send_message(self, message: str):
         """发送消息到 MC 服务器"""
@@ -152,18 +167,18 @@ class McWebSocketConnection:
             return True
 
         except websockets.exceptions.ConnectionClosed as e:
-            # 连接已关闭，更新状态并记录详细信息
-            self.is_connected = False
+            # 连接已关闭，清理资源并记录详细信息
             logger.error(
                 f"向服务器 {self.server_name} 发送消息失败: WebSocket连接已关闭 "
                 f"(code={e.code}, reason='{e.reason}')"
             )
+            self._cleanup_connection()
             return False
         except Exception as e:
             logger.error(f"向服务器 {self.server_name} 发送消息失败: {e}")
-            # 如果是连接相关错误，更新连接状态
+            # 如果是连接相关错误，清理连接状态
             if "connection" in str(e).lower() or "closed" in str(e).lower():
-                self.is_connected = False
+                self._cleanup_connection()
             return False
 
     async def _listen_messages(self, server):
@@ -187,7 +202,6 @@ class McWebSocketConnection:
 
         except websockets.exceptions.ConnectionClosed as e:
             # 记录详细的连接关闭信息
-            self.is_connected = False
             close_info = f"code={e.code}"
             if e.reason:
                 close_info += f", reason='{e.reason}'"
@@ -195,6 +209,9 @@ class McWebSocketConnection:
             logger.warning(
                 f"服务器 {self.server_name} WebSocket 连接已关闭 ({close_info})"
             )
+
+            # 清理连接资源
+            self._cleanup_connection()
 
             # 根据关闭代码决定是否重连
             if e.code in [1000, 1001]:  # 正常关闭或going away
@@ -208,7 +225,7 @@ class McWebSocketConnection:
                 await self._reconnect()
         except Exception as e:
             logger.error(f"监听服务器 {self.server_name} 消息时出错: {e}")
-            self.is_connected = False
+            self._cleanup_connection()
 
     async def _reconnect(self):
         """重连机制"""
@@ -217,28 +234,40 @@ class McWebSocketConnection:
             return
 
         if self.reconnect_attempts >= self.max_reconnect_attempts:
-            logger.error(f"服务器 {self.server_name} 重连次数已达上限，停止重连")
+            logger.error(
+                f"服务器 {self.server_name} 重连次数已达上限 ({self.max_reconnect_attempts})，停止重连"
+            )
             return
 
         self._reconnecting = True
         try:
             self.reconnect_attempts += 1
             logger.info(
-                f"尝试重连服务器 {self.server_name} (第 {self.reconnect_attempts} 次)"
+                f"尝试重连服务器 {self.server_name} "
+                f"(第 {self.reconnect_attempts}/{self.max_reconnect_attempts} 次)"
             )
 
+            # 等待重连延迟
             await asyncio.sleep(self.reconnect_delay)
 
+            # 尝试连接
             if await self.connect():
                 logger.success(f"服务器 {self.server_name} 重连成功")
+                # 重连成功，重置重连参数
+                self.reconnect_delay = 5  # 重置为初始延迟
                 self._reconnecting = False
             else:
-                # 递增延迟时间
+                # 重连失败，递增延迟时间并继续尝试
                 self.reconnect_delay = min(self.reconnect_delay * 2, 60)
+                logger.warning(
+                    f"服务器 {self.server_name} 重连失败，下次延迟 {self.reconnect_delay} 秒"
+                )
                 self._reconnecting = False
-                await self._reconnect()
+                # 递归重连（如果还有尝试次数）
+                if self.reconnect_attempts < self.max_reconnect_attempts:
+                    await self._reconnect()
         except Exception as e:
-            logger.error(f"重连过程中出错: {e}")
+            logger.error(f"服务器 {self.server_name} 重连过程中出错: {e}")
             self._reconnecting = False
 
 
@@ -283,17 +312,38 @@ class McWebSocketManager:
 
     async def send_to_server(self, server_id: int, message: str):
         """向指定服务器发送消息"""
-        if server_id in self.connections:
-            connection = self.connections[server_id]
-            if connection._is_connection_valid():
+        if server_id not in self.connections:
+            logger.warning(f"服务器 ID {server_id} 的连接不存在")
+            return False
+
+        connection = self.connections[server_id]
+
+        # 检查连接是否有效
+        if connection._is_connection_valid():
+            return await connection.send_message(message)
+
+        # 连接无效，尝试重连
+        logger.info(
+            f"服务器 ID {server_id} ({connection.server_name}) 的连接无效，尝试重连..."
+        )
+
+        # 避免并发重连
+        if connection._reconnecting:
+            logger.debug(f"服务器 {connection.server_name} 正在重连中，跳过此次发送")
+            return False
+
+        # 尝试重连
+        try:
+            if await connection.connect():
+                logger.success(
+                    f"服务器 {connection.server_name} 重连成功，继续发送消息"
+                )
                 return await connection.send_message(message)
             else:
-                logger.warning(
-                    f"服务器 ID {server_id} ({connection.server_name}) 的连接无效，无法发送消息"
-                )
+                logger.error(f"服务器 {connection.server_name} 重连失败，无法发送消息")
                 return False
-        else:
-            logger.warning(f"服务器 ID {server_id} 的连接不存在")
+        except Exception as e:
+            logger.error(f"服务器 {connection.server_name} 重连过程中出错: {e}")
             return False
 
     def get_connection_status(self) -> dict:
