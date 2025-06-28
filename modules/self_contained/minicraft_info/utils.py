@@ -11,8 +11,7 @@ async def detect_server_type(server_address: str) -> str:
         return "java"
     except Exception:
         try:
-            # 再尝试基岩版
-            server = await BedrockServer.async_lookup(server_address)
+            server = BedrockServer.lookup(server_address)
             await server.async_status()
             return "bedrock"
         except Exception:
@@ -30,24 +29,24 @@ async def get_minecraft_server_info(server_host: str) -> dict | str:
         server = await JavaServer.async_lookup(server_host)
         status = await server.async_status()
     except ConnectionRefusedError as e:
-        logger.error(f"[MC查询]无法连接到服务器 {server_host}, {e}")
-        return f"未能连接到服务器「{server_host}」"
+        logger.error(f"[MC查询]无法连接到服务器 {server_host}: {e}")
+        return f"无法连接到服务器「{server_host}」，请检查服务器地址和端口是否正确"
     except TimeoutError as e:
-        logger.error(f"[MC查询]连接服务器 {server_host} 超时, {e}")
-        return f"连接服务器 {server_host} 超时"
+        logger.error(f"[MC查询]连接服务器 {server_host} 超时: {e}")
+        return f"连接服务器「{server_host}」超时，请稍后重试"
     except ConnectionResetError as e:
-        logger.error(f"[MC查询]连接服务器 {server_host} 被重置, {e}")
-        return f"连接服务器 {server_host} 被重置"
+        logger.error(f"[MC查询]连接服务器 {server_host} 被重置: {e}")
+        return f"连接服务器「{server_host}」被重置，服务器可能暂时不可用"
     except OSError as e:
-        logger.error(f"[MC查询]连接服务器 {server_host} 出现错误, {e}")
-        return f"连接服务器 {server_host} 出现错误"
+        logger.error(f"[MC查询]查询服务器 {server_host} 出现网络错误: {e}")
+        return f"查询服务器「{server_host}」时出现网络错误，请检查网络连接"
 
     try:
         query_result = await JavaServer.async_query(server)
         players = query_result.players.names
     except Exception as e:
-        logger.error(f"[MC查询]查询服务器 {server_host} 出现错误, {e}")
-        players = []
+        logger.warning(f"[MC查询]查询服务器 {server_host} 玩家列表失败: {e}")
+        players = []  # 玩家列表查询失败时使用空列表，不影响基本信息显示
 
     return {
         "server_host": server_host,
