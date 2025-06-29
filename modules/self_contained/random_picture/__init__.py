@@ -2,18 +2,18 @@ import os
 import random
 from pathlib import Path
 
-from PIL import Image
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import Group, GroupMessage
 from graia.ariadne.message.chain import MessageChain
 from graia.ariadne.message.element import Image as Graia_Image
 from graia.ariadne.message.element import Source
-from graia.ariadne.message.parser.twilight import Twilight, RegexMatch
-from graia.ariadne.util.saya import listen, decorate, dispatch
-from graia.saya import Saya, Channel
+from graia.ariadne.message.parser.twilight import RegexMatch, Twilight
+from graia.ariadne.util.saya import decorate, dispatch, listen
+from graia.saya import Channel, Saya
 from loguru import logger
+from PIL import Image
 
-from core.control import Distribute, Permission, Function, FrequencyLimitation
+from core.control import Distribute, FrequencyLimitation, Function, Permission
 from core.models import saya_model
 
 module_controller = saya_model.get_module_controller()
@@ -25,7 +25,13 @@ channel.meta["description"] = "发送随机图的插件"
 channel.metadata = module_controller.get_metadata_from_path(Path(__file__))
 
 # 图库映射名
-pic_map = {"ding": "ding", "long": "long", "chai": "chai", "capoo": "capoo"}
+pic_map = {
+    "ding": "ding",
+    "long": "long",
+    "chai": "chai",
+    "capoo": "capoo",
+    "doro": "doro",
+}
 
 
 @listen(GroupMessage)
@@ -132,6 +138,35 @@ async def random_capoo(app: Ariadne, group: Group, source: Source):
     if not pic_path.exists():
         return await app.send_message(
             group, MessageChain(f"未找到图库 '{pic_map['capoo']}'"), quote=source
+        )
+    pic_list = os.listdir(pic_path)
+    pic = random.choice(pic_list)
+    pic_path = f"{pic_path}/{pic}"
+    try:
+        return await app.send_message(
+            group, MessageChain(Graia_Image(path=pic_path)), quote=source
+        )
+    except Exception as e:
+        logger.error(f"发送{pic}失败")
+        logger.error(e)
+
+
+@listen(GroupMessage)
+@decorate(
+    Distribute.require(),
+    Function.require(channel.module),
+    FrequencyLimitation.require(channel.module),
+    Permission.group_require(channel.metadata.level),
+    Permission.user_require(Permission.User),
+)
+@dispatch(
+    Twilight([RegexMatch(r"^(随机|来[点张])([桃][乐][丝]|[Dd]oro)|[Dd]oro[！!]?$")])
+)
+async def random_doro(app: Ariadne, group: Group, source: Source):
+    pic_path = Path(__file__).parent / "imgs" / pic_map["doro"]
+    if not pic_path.exists():
+        return await app.send_message(
+            group, MessageChain(f"未找到图库 '{pic_map['doro']}'"), quote=source
         )
     pic_list = os.listdir(pic_path)
     pic = random.choice(pic_list)
