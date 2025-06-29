@@ -95,7 +95,16 @@ class McWebSocketConnection:
         # 关闭 WebSocket 连接
         if self.websocket:
             try:
-                if not self.websocket.closed:
+                # 检查连接是否已关闭，兼容不同版本的 websockets 库
+                is_closed = False
+                if hasattr(self.websocket, "close_code"):
+                    # websockets 15.0+ 版本
+                    is_closed = self.websocket.close_code is not None
+                elif hasattr(self.websocket, "closed"):
+                    # 旧版本 websockets 库
+                    is_closed = self.websocket.closed
+
+                if not is_closed:
                     await self.websocket.close()
                     logger.debug(f"服务器 {self.server_name} WebSocket 连接已主动关闭")
                 else:
@@ -123,8 +132,20 @@ class McWebSocketConnection:
 
             # 安全检查 WebSocket 状态
             try:
-                if self.websocket.closed:
+                # websockets 15.0+ 使用 close_code 属性而不是 closed 属性
+                # close_code 为 None 表示连接活跃，非 None 表示连接已关闭
+                if (
+                    hasattr(self.websocket, "close_code")
+                    and self.websocket.close_code is not None
+                ):
                     # 连接已关闭，清理资源并更新状态
+                    logger.debug(
+                        f"检测到服务器 {self.server_name} 的 WebSocket 连接已关闭 (close_code={self.websocket.close_code})，清理资源"
+                    )
+                    self._cleanup_connection()
+                    return False
+                elif hasattr(self.websocket, "closed") and self.websocket.closed:
+                    # 兼容旧版本 websockets 库的 closed 属性
                     logger.debug(
                         f"检测到服务器 {self.server_name} 的 WebSocket 连接已关闭，清理资源"
                     )
@@ -165,8 +186,17 @@ class McWebSocketConnection:
                 status_info.append("is_connected=False")
             if not self.websocket:
                 status_info.append("websocket=None")
-            elif self.websocket.closed:
-                status_info.append("websocket.closed=True")
+            else:
+                # 检查连接状态，兼容不同版本的 websockets 库
+                if (
+                    hasattr(self.websocket, "close_code")
+                    and self.websocket.close_code is not None
+                ):
+                    status_info.append(
+                        f"websocket.close_code={self.websocket.close_code}"
+                    )
+                elif hasattr(self.websocket, "closed") and self.websocket.closed:
+                    status_info.append("websocket.closed=True")
 
             logger.warning(
                 f"服务器 ID {self.server_id}({self.server_name}) 的连接无效，无法发送消息 "
@@ -397,7 +427,14 @@ class McWebSocketManager:
                 and not connection.listen_task.done(),
                 "websocket_exists": connection.websocket is not None,
                 "websocket_closed": connection.websocket is None
-                or connection.websocket.closed
+                or (
+                    hasattr(connection.websocket, "close_code")
+                    and connection.websocket.close_code is not None
+                )
+                or (
+                    hasattr(connection.websocket, "closed")
+                    and connection.websocket.closed
+                )
                 if connection.websocket
                 else True,
             }
